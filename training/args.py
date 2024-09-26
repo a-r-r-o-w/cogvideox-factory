@@ -165,11 +165,6 @@ def _get_training_args(parser: argparse.ArgumentParser) -> None:
         help="Number of frames to skip from the end of each input video. Useful if training data contains outro sequences.",
     )
     parser.add_argument(
-        "--random_flip",
-        action="store_true",
-        help="whether to randomly flip videos horizontally",
-    )
-    parser.add_argument(
         "--train_batch_size",
         type=int,
         default=4,
@@ -316,7 +311,7 @@ def _get_optimizer_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--epsilon",
         type=float,
-        default=1e-08,
+        default=1e-8,
         help="Epsilon value for the Adam optimizer and Prodigy optimizers.",
     )
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")

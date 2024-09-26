@@ -106,6 +106,17 @@ def get_optimizer(
     return optimizer
 
 
+def get_gradient_norm(parameters):
+    norm = 0
+    for param in parameters:
+        if param.grad is None:
+            continue
+        local_norm = param.grad.detach().data.norm(2)
+        norm += local_norm.item() ** 2
+    norm = norm**0.5
+    return norm
+
+
 # Similar to diffusers.pipelines.hunyuandit.pipeline_hunyuandit.get_resize_crop_region_for_grid
 def get_resize_crop_region_for_grid(src, tgt_width, tgt_height):
     tw = tgt_width

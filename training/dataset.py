@@ -15,8 +15,8 @@ logger = get_logger(__name__)
 
 decord.bridge.set_bridge("torch")
 
-HEIGHT = [256, 320, 360, 480, 512, 576, 720, 768, 960, 1024, 1080, 1280, 1536]
-WIDTH = [256, 320, 360, 480, 512, 576, 720, 768, 960, 1024, 1080, 1280, 1536]
+HEIGHT = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
+WIDTH = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
 T2V_FRAMES = [16, 24, 32, 48, 64, 80]
 
 T2V_RESOLUTIONS = [(f, h, w) for h in HEIGHT for w in WIDTH for f in T2V_FRAMES]
@@ -150,7 +150,11 @@ class VideoDatasetWithResizing(VideoDataset):
     def _preprocess_video(self, path: Path) -> torch.Tensor:
         video_reader = decord.VideoReader(uri=path.as_posix())
         video_num_frames = len(video_reader)
-        nearest_frame_bucket = min(T2V_FRAMES, key=lambda x: abs(x - video_num_frames))
+        # nearest_frame_bucket = min(T2V_FRAMES, key=lambda x: abs(x - video_num_frames))
+
+        # Only for now: purposefully limiting to max_num_frames
+        nearest_frame_bucket = min(T2V_FRAMES, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)))
+
         frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
 
         frames = video_reader.get_batch(frame_indices)
@@ -188,3 +192,4 @@ class BucketSampler(Sampler):
                 yield self.buckets[(f, h, w)]
                 del self.buckets[(f, h, w)]
                 self.buckets[(f, h, w)] = []
+                break

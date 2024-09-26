@@ -53,7 +53,7 @@ from transformers import AutoTokenizer, T5EncoderModel
 from args import get_args  # isort:skip
 from dataset import BucketSampler, VideoDatasetWithResizing  # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
-from utils import get_optimizer, prepare_rotary_positional_embeddings  # isort:skip
+from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings  # isort:skip
 
 
 logger = get_logger(__name__)
@@ -406,6 +406,7 @@ def main(args):
         videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
         latent_dist = vae.encode(videos).latent_dist
         videos = latent_dist.sample() * vae.config.scaling_factor
+        videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
         videos = videos.to(memory_format=torch.contiguous_format).float()
 
         return {
@@ -423,7 +424,7 @@ def main(args):
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -453,7 +454,7 @@ def main(args):
     )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
@@ -472,7 +473,6 @@ def main(args):
     logger.info("***** Running training *****")
     logger.info(f"  Num trainable parameters = {num_trainable_parameters}")
     logger.info(f"  Num examples = {len(train_dataset)}")
-    logger.info(f"  Num batches each epoch = {len(train_dataloader)}")
     logger.info(f"  Num epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -550,15 +550,15 @@ def main(args):
                     0,
                     scheduler.config.num_train_timesteps,
                     (batch_size,),
+                    dtype=torch.int64,
                     device=model_input.device,
                 )
-                timesteps = timesteps.long()
 
                 # Prepare rotary embeds
                 image_rotary_emb = (
                     prepare_rotary_positional_embeddings(
-                        height=args.height,
-                        width=args.width,
+                        height=height * vae_scale_factor_spatial,
+                        width=width * vae_scale_factor_spatial,
                         num_frames=num_frames,
                         vae_scale_factor_spatial=vae_scale_factor_spatial,
                         patch_size=model_config.patch_size,
@@ -581,6 +581,7 @@ def main(args):
                     image_rotary_emb=image_rotary_emb,
                     return_dict=False,
                 )[0]
+
                 model_pred = scheduler.get_velocity(model_output, noisy_model_input, timesteps)
 
                 alphas_cumprod = scheduler.alphas_cumprod[timesteps]
@@ -598,8 +599,9 @@ def main(args):
                 accelerator.backward(loss)
 
                 if accelerator.sync_gradients:
-                    params_to_clip = transformer.parameters()
-                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                    gradient_norm_before_clip = get_gradient_norm(transformer.parameters())
+                    accelerator.clip_grad_norm_(transformer.parameters(), args.max_grad_norm)
+                    gradient_norm_after_clip = get_gradient_norm(transformer.parameters())
 
                 if accelerator.state.deepspeed_plugin is None:
                     optimizer.step()
@@ -638,7 +640,12 @@ def main(args):
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
-            logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+            logs = {
+                "loss": loss.detach().item(),
+                "lr": lr_scheduler.get_last_lr()[0],
+                "gradient_norm_before_clip": gradient_norm_before_clip,
+                "gradient_norm_after_clip": gradient_norm_after_clip,
+            }
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
@@ -647,7 +654,6 @@ def main(args):
 
         if accelerator.is_main_process:
             if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
-                # Create pipeline
                 pipe = CogVideoXPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     transformer=unwrap_model(transformer),
@@ -676,8 +682,8 @@ def main(args):
                         is_final_validation=False,
                     )
 
-    # Save the trained models
     accelerator.wait_for_everyone()
+
     if accelerator.is_main_process:
         transformer = unwrap_model(transformer)
         dtype = (

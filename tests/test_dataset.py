@@ -6,7 +6,6 @@ import sys
 def test_video_dataset():
     from dataset import VideoDataset
 
-
     dataset_dirs = VideoDataset(
         data_root="assets/tests/",
         caption_column="prompts.txt",
@@ -36,7 +35,6 @@ def test_video_dataset():
 def test_video_dataset_with_resizing():
     from dataset import VideoDatasetWithResizing
 
-
     dataset_dirs = VideoDatasetWithResizing(
         data_root="assets/tests/",
         caption_column="prompts.txt",
@@ -57,7 +55,7 @@ def test_video_dataset_with_resizing():
 
     assert len(dataset_dirs) == 1
     assert len(dataset_csv) == 1
-    assert dataset_dirs[0]["video"].shape == (48, 3, 480, 720) # Changes due to T2V frame bucket sampling
+    assert dataset_dirs[0]["video"].shape == (48, 3, 480, 720)  # Changes due to T2V frame bucket sampling
     assert (dataset_dirs[0]["video"] == dataset_csv[0]["video"]).all()
 
     print(dataset_dirs[0]["video"].shape)
@@ -65,9 +63,8 @@ def test_video_dataset_with_resizing():
 
 def test_video_dataset_with_bucket_sampler():
     import torch
-    from dataset import VideoDatasetWithResizing, BucketSampler
+    from dataset import BucketSampler, VideoDatasetWithResizing
     from torch.utils.data import DataLoader
-
 
     dataset_dirs = VideoDatasetWithResizing(
         data_root="assets/tests/",
@@ -84,7 +81,7 @@ def test_video_dataset_with_bucket_sampler():
         videos = [x["video"] for x in data[0]]
         videos = torch.stack(videos)
         return captions, videos
-        
+
     dataloader = DataLoader(dataset_dirs, batch_size=1, sampler=sampler, collate_fn=collate_fn)
     first = False
 
