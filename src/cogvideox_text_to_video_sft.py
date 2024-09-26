@@ -17,6 +17,7 @@ import logging
 import math
 import os
 import shutil
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict
 
@@ -28,6 +29,7 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import (
     DistributedDataParallelKwargs,
+    InitProcessGroupKwargs,
     ProjectConfiguration,
     set_seed,
 )
@@ -49,7 +51,7 @@ from transformers import AutoTokenizer, T5EncoderModel
 
 
 from args import get_args  # isort:skip
-from dataset import VideoDataset  # isort:skip
+from dataset import BucketSampler, VideoDatasetWithResizing  # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
 from utils import get_optimizer, prepare_rotary_positional_embeddings  # isort:skip
 
@@ -167,13 +169,14 @@ def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
-    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    init_process_group_kwargs = InitProcessGroupKwargs(backend="nccl", timeout=timedelta(seconds=args.nccl_timeout))
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
-        kwargs_handlers=[kwargs],
+        kwargs_handlers=[ddp_kwargs, init_process_group_kwargs],
     )
 
     # Disable AMP for MPS.
@@ -384,36 +387,25 @@ def main(args):
     )
 
     # Dataset and DataLoader
-    train_dataset = VideoDataset(
-        data_root=args.instance_data_root,
-        dataset_name=args.dataset_name,
-        dataset_config_name=args.dataset_config_name,
+    train_dataset = VideoDatasetWithResizing(
+        data_root=args.data_root,
+        dataset_file=args.dataset_file,
         caption_column=args.caption_column,
         video_column=args.video_column,
-        height=args.height,
-        width=args.width,
-        fps=args.fps,
         max_num_frames=args.max_num_frames,
-        skip_frames_start=args.skip_frames_start,
-        skip_frames_end=args.skip_frames_end,
-        cache_dir=args.cache_dir,
         id_token=args.id_token,
+        random_flip=args.random_flip,
     )
 
-    def encode_video(video):
-        video = video.to(accelerator.device, dtype=vae.dtype).unsqueeze(0)
-        video = video.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
-        latent_dist = vae.encode(video).latent_dist
-        return latent_dist
+    def collate_fn(data):
+        prompts = [x["prompt"] for x in data[0]]
 
-    train_dataset.instance_videos = [encode_video(video) for video in train_dataset.instance_videos]
-
-    def collate_fn(examples):
-        videos = [example["instance_video"].sample() * vae.config.scaling_factor for example in examples]
-        prompts = [example["instance_prompt"] for example in examples]
-
-        videos = torch.cat(videos)
-        videos = videos.permute(0, 2, 1, 3, 4)
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos)
+        videos = videos.to(accelerator.device, dtype=vae.dtype)
+        videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+        latent_dist = vae.encode(videos).latent_dist
+        videos = latent_dist.sample() * vae.config.scaling_factor
         videos = videos.to(memory_format=torch.contiguous_format).float()
 
         return {
@@ -423,8 +415,8 @@ def main(args):
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=args.train_batch_size,
-        shuffle=True,
+        batch_size=1,
+        sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
         collate_fn=collate_fn,
         num_workers=args.dataloader_num_workers,
     )

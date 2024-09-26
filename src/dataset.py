@@ -76,7 +76,7 @@ class VideoDataset(Dataset):
             # Here, index is actually a list of data objects that we need to return.
             # This is done so that we don't have to load data twice.
             return index
-        
+
         index = index % self.num_videos
         video = self._preprocess_video(self.video_paths[index])
         return {

@@ -32,44 +32,40 @@ def _get_model_args(parser: argparse.ArgumentParser) -> None:
 
 def _get_dataset_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--dataset_name",
-        type=str,
-        default=None,
-        help=(
-            "The name of the Dataset (from the HuggingFace hub) containing the training data of instance images (could be your own, possibly private,"
-            " dataset). It can also be a path pointing to a local copy of a dataset in your filesystem,"
-            " or to a folder containing files that 🤗 Datasets can understand."
-        ),
-    )
-    parser.add_argument(
-        "--dataset_config_name",
-        type=str,
-        default=None,
-        help="The config of the Dataset, leave as None if there's only one config.",
-    )
-    parser.add_argument(
-        "--instance_data_root",
+        "--data_root",
         type=str,
         default=None,
         help=("A folder containing the training data."),
     )
     parser.add_argument(
+        "--dataset_file",
+        type=str,
+        default=None,
+        help=("Path to a CSV file if loading prompts/video paths using this format."),
+    )
+    parser.add_argument(
         "--video_column",
         type=str,
         default="video",
-        help="The column of the dataset containing videos. Or, the name of the file in `--instance_data_root` folder containing the line-separated path to video data.",
+        help="The column of the dataset containing videos. Or, the name of the file in `--data_root` folder containing the line-separated path to video data.",
     )
     parser.add_argument(
         "--caption_column",
         type=str,
         default="text",
-        help="The column of the dataset containing the instance prompt for each video. Or, the name of the file in `--instance_data_root` folder containing the line-separated instance prompts.",
+        help="The column of the dataset containing the instance prompt for each video. Or, the name of the file in `--data_root` folder containing the line-separated instance prompts.",
     )
     parser.add_argument(
         "--id_token",
         type=str,
         default=None,
         help="Identifier token appended to the start of each prompt if provided.",
+    )
+    parser.add_argument(
+        "--random_flip",
+        type=float,
+        default=None,
+        help="If random horizontal flip augmentation is to be used, this should be the flip probability.",
     )
     parser.add_argument(
         "--dataloader_num_workers",
@@ -368,6 +364,12 @@ def _get_configuration_args(parser: argparse.ArgumentParser) -> None:
             "Whether or not to allow TF32 on Ampere GPUs. Can be used to speed up training. For more information, see"
             " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
         ),
+    )
+    parser.add_argument(
+        "--nccl_timeout",
+        type=int,
+        default=600,
+        help="Maximum timeout duration before which allgather, or related, operations fail in multi-GPU/multi-node training settings.",
     )
     parser.add_argument(
         "--report_to",
