@@ -152,7 +152,7 @@ class VideoDatasetWithResizing(VideoDataset):
         video_num_frames = len(video_reader)
         # nearest_frame_bucket = min(T2V_FRAMES, key=lambda x: abs(x - video_num_frames))
 
-        # Only for now: purposefully limiting to max_num_frames
+        # TODO: Only for now - purposefully limiting to max_num_frames
         nearest_frame_bucket = min(T2V_FRAMES, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)))
 
         frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))

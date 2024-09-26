@@ -97,7 +97,7 @@ def test_video_dataset_with_bucket_sampler():
 
 
 if __name__ == "__main__":
-    sys.path.append("./src")
+    sys.path.append("./training")
 
     test_video_dataset()
     test_video_dataset_with_resizing()
