@@ -657,11 +657,18 @@ def main(args):
                 pipe = CogVideoXPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     transformer=unwrap_model(transformer),
+                    text_encoder=unwrap_model(text_encoder),
+                    vae=unwrap_model(vae),
                     scheduler=scheduler,
                     revision=args.revision,
                     variant=args.variant,
                     torch_dtype=weight_dtype,
                 )
+
+                if args.enable_slicing:
+                    pipe.vae.enable_slicing()
+                if args.enable_tiling:
+                    pipe.vae.enable_tiling()
 
                 validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
                 for validation_prompt in validation_prompts:

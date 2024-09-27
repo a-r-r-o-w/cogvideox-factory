@@ -13,13 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
 import logging
 import math
 import os
 import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
 
 import diffusers
 import torch
@@ -37,11 +35,7 @@ from diffusers import (
     CogVideoXPipeline,
     CogVideoXTransformer3DModel,
 )
-from diffusers.models.embeddings import get_3d_rotary_pos_embed
 from diffusers.optimization import get_scheduler
-from diffusers.pipelines.cogvideo.pipeline_cogvideox import (
-    get_resize_crop_region_for_grid,
-)
 from diffusers.training_utils import (
     cast_training_params,
     clear_objs_and_retain_memory,
@@ -56,10 +50,15 @@ from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_
 from diffusers.utils.torch_utils import is_compiled_module
 from huggingface_hub import create_repo, upload_folder
 from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dict
-from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
+from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer, T5EncoderModel, T5Tokenizer
+from transformers import AutoTokenizer, T5EncoderModel
+
+
+from args import get_args  # isort:skip
+from dataset import BucketSampler, VideoDatasetWithResizing  # isort:skip
+from text_encoder import compute_prompt_embeddings  # isort:skip
+from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings  # isort:skip
 
 
 if is_wandb_available():
@@ -69,593 +68,6 @@ if is_wandb_available():
 check_min_version("0.31.0.dev0")
 
 logger = get_logger(__name__)
-
-
-def get_args():
-    parser = argparse.ArgumentParser(description="Simple example of a training script for CogVideoX.")
-
-    # Model information
-    parser.add_argument(
-        "--pretrained_model_name_or_path",
-        type=str,
-        default=None,
-        required=True,
-        help="Path to pretrained model or model identifier from huggingface.co/models.",
-    )
-    parser.add_argument(
-        "--revision",
-        type=str,
-        default=None,
-        required=False,
-        help="Revision of pretrained model identifier from huggingface.co/models.",
-    )
-    parser.add_argument(
-        "--variant",
-        type=str,
-        default=None,
-        help="Variant of the model files of the pretrained model identifier from huggingface.co/models, 'e.g.' fp16",
-    )
-    parser.add_argument(
-        "--cache_dir",
-        type=str,
-        default=None,
-        help="The directory where the downloaded models and datasets will be stored.",
-    )
-
-    # Dataset information
-    parser.add_argument(
-        "--dataset_name",
-        type=str,
-        default=None,
-        help=(
-            "The name of the Dataset (from the HuggingFace hub) containing the training data of instance images (could be your own, possibly private,"
-            " dataset). It can also be a path pointing to a local copy of a dataset in your filesystem,"
-            " or to a folder containing files that 🤗 Datasets can understand."
-        ),
-    )
-    parser.add_argument(
-        "--dataset_config_name",
-        type=str,
-        default=None,
-        help="The config of the Dataset, leave as None if there's only one config.",
-    )
-    parser.add_argument(
-        "--instance_data_root",
-        type=str,
-        default=None,
-        help=("A folder containing the training data."),
-    )
-    parser.add_argument(
-        "--video_column",
-        type=str,
-        default="video",
-        help="The column of the dataset containing videos. Or, the name of the file in `--instance_data_root` folder containing the line-separated path to video data.",
-    )
-    parser.add_argument(
-        "--caption_column",
-        type=str,
-        default="text",
-        help="The column of the dataset containing the instance prompt for each video. Or, the name of the file in `--instance_data_root` folder containing the line-separated instance prompts.",
-    )
-    parser.add_argument(
-        "--id_token",
-        type=str,
-        default=None,
-        help="Identifier token appended to the start of each prompt if provided.",
-    )
-    parser.add_argument(
-        "--dataloader_num_workers",
-        type=int,
-        default=0,
-        help=(
-            "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
-        ),
-    )
-
-    # Validation
-    parser.add_argument(
-        "--validation_prompt",
-        type=str,
-        default=None,
-        help="One or more prompt(s) that is used during validation to verify that the model is learning. Multiple validation prompts should be separated by the '--validation_prompt_seperator' string.",
-    )
-    parser.add_argument(
-        "--validation_prompt_separator",
-        type=str,
-        default=":::",
-        help="String that separates multiple validation prompts",
-    )
-    parser.add_argument(
-        "--num_validation_videos",
-        type=int,
-        default=1,
-        help="Number of videos that should be generated during validation per `validation_prompt`.",
-    )
-    parser.add_argument(
-        "--validation_epochs",
-        type=int,
-        default=50,
-        help=(
-            "Run validation every X epochs. Validation consists of running the prompt `args.validation_prompt` multiple times: `args.num_validation_videos`."
-        ),
-    )
-    parser.add_argument(
-        "--guidance_scale",
-        type=float,
-        default=6,
-        help="The guidance scale to use while sampling validation videos.",
-    )
-    parser.add_argument(
-        "--use_dynamic_cfg",
-        action="store_true",
-        default=False,
-        help="Whether or not to use the default cosine dynamic guidance schedule when sampling validation videos.",
-    )
-
-    # Training information
-    parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
-    parser.add_argument(
-        "--rank",
-        type=int,
-        default=128,
-        help=("The dimension of the LoRA update matrices."),
-    )
-    parser.add_argument(
-        "--lora_alpha",
-        type=float,
-        default=128,
-        help=("The scaling factor to scale LoRA weight update. The actual scaling factor is `lora_alpha / rank`"),
-    )
-    parser.add_argument(
-        "--mixed_precision",
-        type=str,
-        default=None,
-        choices=["no", "fp16", "bf16"],
-        help=(
-            "Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="
-            " 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the"
-            " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
-        ),
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="cogvideox-lora",
-        help="The output directory where the model predictions and checkpoints will be written.",
-    )
-    parser.add_argument(
-        "--height",
-        type=int,
-        default=480,
-        help="All input videos are resized to this height.",
-    )
-    parser.add_argument(
-        "--width",
-        type=int,
-        default=720,
-        help="All input videos are resized to this width.",
-    )
-    parser.add_argument("--fps", type=int, default=8, help="All input videos will be used at this FPS.")
-    parser.add_argument(
-        "--max_num_frames",
-        type=int,
-        default=49,
-        help="All input videos will be truncated to these many frames.",
-    )
-    parser.add_argument(
-        "--skip_frames_start",
-        type=int,
-        default=0,
-        help="Number of frames to skip from the beginning of each input video. Useful if training data contains intro sequences.",
-    )
-    parser.add_argument(
-        "--skip_frames_end",
-        type=int,
-        default=0,
-        help="Number of frames to skip from the end of each input video. Useful if training data contains outro sequences.",
-    )
-    parser.add_argument(
-        "--random_flip",
-        action="store_true",
-        help="whether to randomly flip videos horizontally",
-    )
-    parser.add_argument(
-        "--train_batch_size",
-        type=int,
-        default=4,
-        help="Batch size (per device) for the training dataloader.",
-    )
-    parser.add_argument("--num_train_epochs", type=int, default=1)
-    parser.add_argument(
-        "--max_train_steps",
-        type=int,
-        default=None,
-        help="Total number of training steps to perform. If provided, overrides `--num_train_epochs`.",
-    )
-    parser.add_argument(
-        "--checkpointing_steps",
-        type=int,
-        default=500,
-        help=(
-            "Save a checkpoint of the training state every X updates. These checkpoints can be used both as final"
-            " checkpoints in case they are better than the last checkpoint, and are also suitable for resuming"
-            " training using `--resume_from_checkpoint`."
-        ),
-    )
-    parser.add_argument(
-        "--checkpoints_total_limit",
-        type=int,
-        default=None,
-        help=("Max number of checkpoints to store."),
-    )
-    parser.add_argument(
-        "--resume_from_checkpoint",
-        type=str,
-        default=None,
-        help=(
-            "Whether training should be resumed from a previous checkpoint. Use a path saved by"
-            ' `--checkpointing_steps`, or `"latest"` to automatically select the last available checkpoint.'
-        ),
-    )
-    parser.add_argument(
-        "--gradient_accumulation_steps",
-        type=int,
-        default=1,
-        help="Number of updates steps to accumulate before performing a backward/update pass.",
-    )
-    parser.add_argument(
-        "--gradient_checkpointing",
-        action="store_true",
-        help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",
-    )
-    parser.add_argument(
-        "--learning_rate",
-        type=float,
-        default=1e-4,
-        help="Initial learning rate (after the potential warmup period) to use.",
-    )
-    parser.add_argument(
-        "--scale_lr",
-        action="store_true",
-        default=False,
-        help="Scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size.",
-    )
-    parser.add_argument(
-        "--lr_scheduler",
-        type=str,
-        default="constant",
-        help=(
-            'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
-            ' "constant", "constant_with_warmup"]'
-        ),
-    )
-    parser.add_argument(
-        "--lr_warmup_steps",
-        type=int,
-        default=500,
-        help="Number of steps for the warmup in the lr scheduler.",
-    )
-    parser.add_argument(
-        "--lr_num_cycles",
-        type=int,
-        default=1,
-        help="Number of hard resets of the lr in cosine_with_restarts scheduler.",
-    )
-    parser.add_argument(
-        "--lr_power",
-        type=float,
-        default=1.0,
-        help="Power factor of the polynomial scheduler.",
-    )
-    parser.add_argument(
-        "--enable_slicing",
-        action="store_true",
-        default=False,
-        help="Whether or not to use VAE slicing for saving memory.",
-    )
-    parser.add_argument(
-        "--enable_tiling",
-        action="store_true",
-        default=False,
-        help="Whether or not to use VAE tiling for saving memory.",
-    )
-
-    # Optimizer
-    parser.add_argument(
-        "--optimizer",
-        type=lambda s: s.lower(),
-        default="adam",
-        choices=["adam", "adamw", "prodigy"],
-        help=("The optimizer type to use."),
-    )
-    parser.add_argument(
-        "--use_8bit_adam",
-        action="store_true",
-        help="Whether or not to use 8-bit Adam from bitsandbytes. Ignored if optimizer is not set to AdamW",
-    )
-    parser.add_argument(
-        "--adam_beta1",
-        type=float,
-        default=0.9,
-        help="The beta1 parameter for the Adam and Prodigy optimizers.",
-    )
-    parser.add_argument(
-        "--adam_beta2",
-        type=float,
-        default=0.95,
-        help="The beta2 parameter for the Adam and Prodigy optimizers.",
-    )
-    parser.add_argument(
-        "--prodigy_beta3",
-        type=float,
-        default=None,
-        help="Coefficients for computing the Prodigy optimizer's stepsize using running averages. If set to None, uses the value of square root of beta2.",
-    )
-    parser.add_argument(
-        "--prodigy_decouple",
-        action="store_true",
-        help="Use AdamW style decoupled weight decay",
-    )
-    parser.add_argument(
-        "--adam_weight_decay",
-        type=float,
-        default=1e-04,
-        help="Weight decay to use for unet params",
-    )
-    parser.add_argument(
-        "--adam_epsilon",
-        type=float,
-        default=1e-08,
-        help="Epsilon value for the Adam optimizer and Prodigy optimizers.",
-    )
-    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
-    parser.add_argument(
-        "--prodigy_use_bias_correction",
-        action="store_true",
-        help="Turn on Adam's bias correction.",
-    )
-    parser.add_argument(
-        "--prodigy_safeguard_warmup",
-        action="store_true",
-        help="Remove lr from the denominator of D estimate to avoid issues during warm-up stage.",
-    )
-
-    # Other information
-    parser.add_argument("--tracker_name", type=str, default=None, help="Project tracker name")
-    parser.add_argument(
-        "--push_to_hub",
-        action="store_true",
-        help="Whether or not to push the model to the Hub.",
-    )
-    parser.add_argument(
-        "--hub_token",
-        type=str,
-        default=None,
-        help="The token to use to push to the Model Hub.",
-    )
-    parser.add_argument(
-        "--hub_model_id",
-        type=str,
-        default=None,
-        help="The name of the repository to keep in sync with the local `output_dir`.",
-    )
-    parser.add_argument(
-        "--logging_dir",
-        type=str,
-        default="logs",
-        help="Directory where logs are stored.",
-    )
-    parser.add_argument(
-        "--allow_tf32",
-        action="store_true",
-        help=(
-            "Whether or not to allow TF32 on Ampere GPUs. Can be used to speed up training. For more information, see"
-            " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
-        ),
-    )
-    parser.add_argument(
-        "--report_to",
-        type=str,
-        default=None,
-        help=(
-            'The integration to report the results and logs to. Supported platforms are `"tensorboard"`'
-            ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
-        ),
-    )
-
-    return parser.parse_args()
-
-
-class VideoDataset(Dataset):
-    def __init__(
-        self,
-        instance_data_root: Optional[str] = None,
-        dataset_name: Optional[str] = None,
-        dataset_config_name: Optional[str] = None,
-        caption_column: str = "text",
-        video_column: str = "video",
-        height: int = 480,
-        width: int = 720,
-        fps: int = 8,
-        max_num_frames: int = 49,
-        skip_frames_start: int = 0,
-        skip_frames_end: int = 0,
-        cache_dir: Optional[str] = None,
-        id_token: Optional[str] = None,
-    ) -> None:
-        super().__init__()
-
-        self.instance_data_root = Path(instance_data_root) if instance_data_root is not None else None
-        self.dataset_name = dataset_name
-        self.dataset_config_name = dataset_config_name
-        self.caption_column = caption_column
-        self.video_column = video_column
-        self.height = height
-        self.width = width
-        self.fps = fps
-        self.max_num_frames = max_num_frames
-        self.skip_frames_start = skip_frames_start
-        self.skip_frames_end = skip_frames_end
-        self.cache_dir = cache_dir
-        self.id_token = id_token or ""
-
-        if dataset_name is not None:
-            (
-                self.instance_prompts,
-                self.instance_video_paths,
-            ) = self._load_dataset_from_hub()
-        else:
-            (
-                self.instance_prompts,
-                self.instance_video_paths,
-            ) = self._load_dataset_from_local_path()
-
-        self.num_instance_videos = len(self.instance_video_paths)
-        if self.num_instance_videos != len(self.instance_prompts):
-            raise ValueError(
-                f"Expected length of instance prompts and videos to be the same but found {len(self.instance_prompts)=} and {len(self.instance_video_paths)=}. Please ensure that the number of caption prompts and videos match in your dataset."
-            )
-
-        self.instance_videos = self._preprocess_data()
-
-    def __len__(self):
-        return self.num_instance_videos
-
-    def __getitem__(self, index):
-        return {
-            "instance_prompt": self.id_token + self.instance_prompts[index],
-            "instance_video": self.instance_videos[index],
-        }
-
-    def _load_dataset_from_hub(self):
-        try:
-            from datasets import load_dataset
-        except ImportError:
-            raise ImportError(
-                "You are trying to load your data using the datasets library. If you wish to train using custom "
-                "captions please install the datasets library: `pip install datasets`. If you wish to load a "
-                "local folder containing images only, specify --instance_data_root instead."
-            )
-
-        # Downloading and loading a dataset from the hub. See more about loading custom images at
-        # https://huggingface.co/docs/datasets/v2.0.0/en/dataset_script
-        dataset = load_dataset(
-            self.dataset_name,
-            self.dataset_config_name,
-            cache_dir=self.cache_dir,
-        )
-        column_names = dataset["train"].column_names
-
-        if self.video_column is None:
-            video_column = column_names[0]
-            logger.info(f"`video_column` defaulting to {video_column}")
-        else:
-            video_column = self.video_column
-            if video_column not in column_names:
-                raise ValueError(
-                    f"`--video_column` value '{video_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-                )
-
-        if self.caption_column is None:
-            caption_column = column_names[1]
-            logger.info(f"`caption_column` defaulting to {caption_column}")
-        else:
-            caption_column = self.caption_column
-            if self.caption_column not in column_names:
-                raise ValueError(
-                    f"`--caption_column` value '{self.caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-                )
-
-        instance_prompts = dataset["train"][caption_column]
-        instance_videos = [Path(self.instance_data_root, filepath) for filepath in dataset["train"][video_column]]
-
-        return instance_prompts, instance_videos
-
-    def _load_dataset_from_local_path(self):
-        if not self.instance_data_root.exists():
-            raise ValueError("Instance videos root folder does not exist")
-
-        prompt_path = self.instance_data_root.joinpath(self.caption_column)
-        video_path = self.instance_data_root.joinpath(self.video_column)
-
-        if not prompt_path.exists() or not prompt_path.is_file():
-            raise ValueError(
-                "Expected `--caption_column` to be path to a file in `--instance_data_root` containing line-separated text prompts."
-            )
-        if not video_path.exists() or not video_path.is_file():
-            raise ValueError(
-                "Expected `--video_column` to be path to a file in `--instance_data_root` containing line-separated paths to video data in the same directory."
-            )
-
-        with open(prompt_path, "r", encoding="utf-8") as file:
-            instance_prompts = [line.strip() for line in file.readlines() if len(line.strip()) > 0]
-        with open(video_path, "r", encoding="utf-8") as file:
-            instance_videos = [
-                self.instance_data_root.joinpath(line.strip()) for line in file.readlines() if len(line.strip()) > 0
-            ]
-
-        if any(not path.is_file() for path in instance_videos):
-            raise ValueError(
-                "Expected '--video_column' to be a path to a file in `--instance_data_root` containing line-separated paths to video data but found atleast one path that is not a valid file."
-            )
-
-        return instance_prompts, instance_videos
-
-    def _preprocess_data(self):
-        try:
-            import decord
-        except ImportError:
-            raise ImportError(
-                "The `decord` package is required for loading the video dataset. Install with `pip install decord`"
-            )
-
-        decord.bridge.set_bridge("torch")
-
-        videos = []
-        train_transforms = transforms.Compose(
-            [
-                transforms.Lambda(lambda x: x / 255.0 * 2.0 - 1.0),
-            ]
-        )
-
-        for filename in self.instance_video_paths:
-            video_reader = decord.VideoReader(uri=filename.as_posix(), width=self.width, height=self.height)
-            video_num_frames = len(video_reader)
-
-            start_frame = min(self.skip_frames_start, video_num_frames)
-            end_frame = max(0, video_num_frames - self.skip_frames_end)
-            if end_frame <= start_frame:
-                frames = video_reader.get_batch([start_frame])
-            elif end_frame - start_frame <= self.max_num_frames:
-                frames = video_reader.get_batch(list(range(start_frame, end_frame)))
-            else:
-                indices = list(
-                    range(
-                        start_frame,
-                        end_frame,
-                        (end_frame - start_frame) // self.max_num_frames,
-                    )
-                )
-                frames = video_reader.get_batch(indices)
-
-            # Ensure that we don't go over the limit
-            frames = frames[: self.max_num_frames]
-            selected_num_frames = frames.shape[0]
-
-            # Choose first (4k + 1) frames as this is how many is required by the VAE
-            remainder = (3 + (selected_num_frames % 4)) % 4
-            if remainder != 0:
-                frames = frames[:-remainder]
-            selected_num_frames = frames.shape[0]
-
-            assert (selected_num_frames - 1) % 4 == 0
-
-            # Training transforms
-            frames = frames.float()
-            frames = torch.stack([train_transforms(frame) for frame in frames], dim=0)
-            videos.append(frames.permute(0, 3, 1, 2).contiguous())  # [F, C, H, W]
-
-        return videos
 
 
 def save_model_card(
@@ -804,211 +216,6 @@ def log_validation(
     clear_objs_and_retain_memory([pipe])
 
     return videos
-
-
-def _get_t5_prompt_embeds(
-    tokenizer: T5Tokenizer,
-    text_encoder: T5EncoderModel,
-    prompt: Union[str, List[str]],
-    num_videos_per_prompt: int = 1,
-    max_sequence_length: int = 226,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
-    text_input_ids=None,
-):
-    prompt = [prompt] if isinstance(prompt, str) else prompt
-    batch_size = len(prompt)
-
-    if tokenizer is not None:
-        text_inputs = tokenizer(
-            prompt,
-            padding="max_length",
-            max_length=max_sequence_length,
-            truncation=True,
-            add_special_tokens=True,
-            return_tensors="pt",
-        )
-        text_input_ids = text_inputs.input_ids
-    else:
-        if text_input_ids is None:
-            raise ValueError("`text_input_ids` must be provided when the tokenizer is not specified.")
-
-    prompt_embeds = text_encoder(text_input_ids.to(device))[0]
-    prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
-
-    # duplicate text embeddings for each generation per prompt, using mps friendly method
-    _, seq_len, _ = prompt_embeds.shape
-    prompt_embeds = prompt_embeds.repeat(1, num_videos_per_prompt, 1)
-    prompt_embeds = prompt_embeds.view(batch_size * num_videos_per_prompt, seq_len, -1)
-
-    return prompt_embeds
-
-
-def encode_prompt(
-    tokenizer: T5Tokenizer,
-    text_encoder: T5EncoderModel,
-    prompt: Union[str, List[str]],
-    num_videos_per_prompt: int = 1,
-    max_sequence_length: int = 226,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
-    text_input_ids=None,
-):
-    prompt = [prompt] if isinstance(prompt, str) else prompt
-    prompt_embeds = _get_t5_prompt_embeds(
-        tokenizer,
-        text_encoder,
-        prompt=prompt,
-        num_videos_per_prompt=num_videos_per_prompt,
-        max_sequence_length=max_sequence_length,
-        device=device,
-        dtype=dtype,
-        text_input_ids=text_input_ids,
-    )
-    return prompt_embeds
-
-
-def compute_prompt_embeddings(
-    tokenizer,
-    text_encoder,
-    prompt,
-    max_sequence_length,
-    device,
-    dtype,
-    requires_grad: bool = False,
-):
-    if requires_grad:
-        prompt_embeds = encode_prompt(
-            tokenizer,
-            text_encoder,
-            prompt,
-            num_videos_per_prompt=1,
-            max_sequence_length=max_sequence_length,
-            device=device,
-            dtype=dtype,
-        )
-    else:
-        with torch.no_grad():
-            prompt_embeds = encode_prompt(
-                tokenizer,
-                text_encoder,
-                prompt,
-                num_videos_per_prompt=1,
-                max_sequence_length=max_sequence_length,
-                device=device,
-                dtype=dtype,
-            )
-    return prompt_embeds
-
-
-def prepare_rotary_positional_embeddings(
-    height: int,
-    width: int,
-    num_frames: int,
-    vae_scale_factor_spatial: int = 8,
-    patch_size: int = 2,
-    attention_head_dim: int = 64,
-    device: Optional[torch.device] = None,
-    base_height: int = 480,
-    base_width: int = 720,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    grid_height = height // (vae_scale_factor_spatial * patch_size)
-    grid_width = width // (vae_scale_factor_spatial * patch_size)
-    base_size_width = base_width // (vae_scale_factor_spatial * patch_size)
-    base_size_height = base_height // (vae_scale_factor_spatial * patch_size)
-
-    grid_crops_coords = get_resize_crop_region_for_grid((grid_height, grid_width), base_size_width, base_size_height)
-    freqs_cos, freqs_sin = get_3d_rotary_pos_embed(
-        embed_dim=attention_head_dim,
-        crops_coords=grid_crops_coords,
-        grid_size=(grid_height, grid_width),
-        temporal_size=num_frames,
-    )
-
-    freqs_cos = freqs_cos.to(device=device)
-    freqs_sin = freqs_sin.to(device=device)
-    return freqs_cos, freqs_sin
-
-
-def get_optimizer(args, params_to_optimize, use_deepspeed: bool = False):
-    # Use DeepSpeed optimzer
-    if use_deepspeed:
-        from accelerate.utils import DummyOptim
-
-        return DummyOptim(
-            params_to_optimize,
-            lr=args.learning_rate,
-            betas=(args.adam_beta1, args.adam_beta2),
-            eps=args.adam_epsilon,
-            weight_decay=args.adam_weight_decay,
-        )
-
-    # Optimizer creation
-    supported_optimizers = ["adam", "adamw", "prodigy"]
-    if args.optimizer not in supported_optimizers:
-        logger.warning(
-            f"Unsupported choice of optimizer: {args.optimizer}. Supported optimizers include {supported_optimizers}. Defaulting to AdamW"
-        )
-        args.optimizer = "adamw"
-
-    if args.use_8bit_adam and args.optimizer.lower() not in ["adam", "adamw"]:
-        logger.warning(
-            f"use_8bit_adam is ignored when optimizer is not set to 'Adam' or 'AdamW'. Optimizer was "
-            f"set to {args.optimizer.lower()}"
-        )
-
-    if args.use_8bit_adam:
-        try:
-            import bitsandbytes as bnb
-        except ImportError:
-            raise ImportError(
-                "To use 8-bit Adam, please install the bitsandbytes library: `pip install bitsandbytes`."
-            )
-
-    if args.optimizer.lower() == "adamw":
-        optimizer_class = bnb.optim.AdamW8bit if args.use_8bit_adam else torch.optim.AdamW
-
-        optimizer = optimizer_class(
-            params_to_optimize,
-            betas=(args.adam_beta1, args.adam_beta2),
-            eps=args.adam_epsilon,
-            weight_decay=args.adam_weight_decay,
-        )
-    elif args.optimizer.lower() == "adam":
-        optimizer_class = bnb.optim.Adam8bit if args.use_8bit_adam else torch.optim.Adam
-
-        optimizer = optimizer_class(
-            params_to_optimize,
-            betas=(args.adam_beta1, args.adam_beta2),
-            eps=args.adam_epsilon,
-            weight_decay=args.adam_weight_decay,
-        )
-    elif args.optimizer.lower() == "prodigy":
-        try:
-            import prodigyopt
-        except ImportError:
-            raise ImportError("To use Prodigy, please install the prodigyopt library: `pip install prodigyopt`")
-
-        optimizer_class = prodigyopt.Prodigy
-
-        if args.learning_rate <= 0.1:
-            logger.warning(
-                "Learning rate is too low. When using prodigy, it's generally better to set learning rate around 1.0"
-            )
-
-        optimizer = optimizer_class(
-            params_to_optimize,
-            lr=args.learning_rate,
-            betas=(args.adam_beta1, args.adam_beta2),
-            beta3=args.prodigy_beta3,
-            weight_decay=args.adam_weight_decay,
-            eps=args.adam_epsilon,
-            decouple=args.prodigy_decouple,
-            use_bias_correction=args.prodigy_use_bias_correction,
-            safeguard_warmup=args.prodigy_safeguard_warmup,
-        )
-
-    return optimizer
 
 
 def main(args):
@@ -1256,36 +463,26 @@ def main(args):
     optimizer = get_optimizer(args, params_to_optimize, use_deepspeed=use_deepspeed_optimizer)
 
     # Dataset and DataLoader
-    train_dataset = VideoDataset(
-        instance_data_root=args.instance_data_root,
-        dataset_name=args.dataset_name,
-        dataset_config_name=args.dataset_config_name,
+    train_dataset = VideoDatasetWithResizing(
+        data_root=args.data_root,
+        dataset_file=args.dataset_file,
         caption_column=args.caption_column,
         video_column=args.video_column,
-        height=args.height,
-        width=args.width,
-        fps=args.fps,
         max_num_frames=args.max_num_frames,
-        skip_frames_start=args.skip_frames_start,
-        skip_frames_end=args.skip_frames_end,
-        cache_dir=args.cache_dir,
         id_token=args.id_token,
+        random_flip=args.random_flip,
     )
 
-    def encode_video(video):
-        video = video.to(accelerator.device, dtype=vae.dtype).unsqueeze(0)
-        video = video.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
-        latent_dist = vae.encode(video).latent_dist
-        return latent_dist
+    def collate_fn(data):
+        prompts = [x["prompt"] for x in data[0]]
 
-    train_dataset.instance_videos = [encode_video(video) for video in train_dataset.instance_videos]
-
-    def collate_fn(examples):
-        videos = [example["instance_video"].sample() * vae.config.scaling_factor for example in examples]
-        prompts = [example["instance_prompt"] for example in examples]
-
-        videos = torch.cat(videos)
-        videos = videos.permute(0, 2, 1, 3, 4)
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos)
+        videos = videos.to(accelerator.device, dtype=vae.dtype)
+        videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+        latent_dist = vae.encode(videos).latent_dist
+        videos = latent_dist.sample() * vae.config.scaling_factor
+        videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
         videos = videos.to(memory_format=torch.contiguous_format).float()
 
         return {
@@ -1295,15 +492,15 @@ def main(args):
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=args.train_batch_size,
-        shuffle=True,
+        batch_size=1,
+        sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
         collate_fn=collate_fn,
         num_workers=args.dataloader_num_workers,
     )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -1333,7 +530,7 @@ def main(args):
     )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
@@ -1352,7 +549,6 @@ def main(args):
     logger.info("***** Running training *****")
     logger.info(f"  Num trainable parameters = {num_trainable_parameters}")
     logger.info(f"  Num examples = {len(train_dataset)}")
-    logger.info(f"  Num batches each epoch = {len(train_dataloader)}")
     logger.info(f"  Num epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -1433,9 +629,9 @@ def main(args):
                     0,
                     scheduler.config.num_train_timesteps,
                     (batch_size,),
+                    dtype=torch.int64,
                     device=model_input.device,
                 )
-                timesteps = timesteps.long()
 
                 # Prepare rotary embeds
                 image_rotary_emb = (
@@ -1481,8 +677,9 @@ def main(args):
                 accelerator.backward(loss)
 
                 if accelerator.sync_gradients:
-                    params_to_clip = transformer.parameters()
-                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                    gradient_norm_before_clip = get_gradient_norm(transformer.parameters())
+                    accelerator.clip_grad_norm_(transformer.parameters(), args.max_grad_norm)
+                    gradient_norm_after_clip = get_gradient_norm(transformer.parameters())
 
                 if accelerator.state.deepspeed_plugin is None:
                     optimizer.step()
@@ -1521,7 +718,12 @@ def main(args):
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
-            logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+            logs = {
+                "loss": loss.detach().item(),
+                "lr": lr_scheduler.get_last_lr()[0],
+                "gradient_norm_before_clip": gradient_norm_before_clip,
+                "gradient_norm_after_clip": gradient_norm_after_clip,
+            }
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
@@ -1540,6 +742,11 @@ def main(args):
                     variant=args.variant,
                     torch_dtype=weight_dtype,
                 )
+
+                if args.enable_slicing:
+                    pipe.vae.enable_slicing()
+                if args.enable_tiling:
+                    pipe.vae.enable_tiling()
 
                 validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
                 for validation_prompt in validation_prompts:
