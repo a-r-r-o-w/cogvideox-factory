@@ -98,7 +98,7 @@ def _get_validation_args(parser: argparse.ArgumentParser) -> None:
         "--validation_epochs",
         type=int,
         default=50,
-        help="Run validation every X epochs. Validation consists of running the prompt `args.validation_prompt` multiple times: `args.num_validation_videos`.",
+        help="Run validation every X training steps. Validation consists of running the validation prompt `args.num_validation_videos` times.",
     )
     parser.add_argument(
         "--guidance_scale",
@@ -116,6 +116,13 @@ def _get_validation_args(parser: argparse.ArgumentParser) -> None:
 
 def _get_training_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+    parser.add_argument("--rank", type=int, default=64, help="The rank for LoRA matrices.")
+    parser.add_argument(
+        "--lora_alpha",
+        type=int,
+        default=64,
+        help="The lora_alpha to compute scaling factor (lora_alpha / rank) for LoRA matrices.",
+    )
     parser.add_argument(
         "--mixed_precision",
         type=str,

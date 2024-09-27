@@ -74,7 +74,14 @@ class VideoDataset(Dataset):
     def __getitem__(self, index: int) -> Dict[str, Any]:
         if isinstance(index, list):
             # Here, index is actually a list of data objects that we need to return.
-            # This is done so that we don't have to load data twice.
+            # The BucketSampler should ideally return indices. But, in the sampler, we'd like
+            # to have information about num_frames, height and width. Since this is not stored
+            # as metadata, we need to read the video to get this information. You could read this
+            # information without loading the full video in memory, but we do it anyway. In order
+            # to not load the video twice (once to get the metadata, and once to return the loaded video
+            # based on sampled indices), we cache it in the BucketSampler. When the sampler is
+            # to yield, we yield the cache data instead of indices. So, this special check ensures
+            # that data is not loaded a second time. PRs are welcome for improvements.
             return index
 
         index = index % self.num_videos
@@ -150,9 +157,6 @@ class VideoDatasetWithResizing(VideoDataset):
     def _preprocess_video(self, path: Path) -> torch.Tensor:
         video_reader = decord.VideoReader(uri=path.as_posix())
         video_num_frames = len(video_reader)
-        # nearest_frame_bucket = min(T2V_FRAMES, key=lambda x: abs(x - video_num_frames))
-
-        # TODO: Only for now - purposefully limiting to max_num_frames
         nearest_frame_bucket = min(T2V_FRAMES, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)))
 
         frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
