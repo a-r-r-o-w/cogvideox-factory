@@ -17,6 +17,7 @@ import logging
 import math
 import os
 import shutil
+from datetime import timedelta
 from pathlib import Path
 
 import diffusers
@@ -26,6 +27,7 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import (
     DistributedDataParallelKwargs,
+    InitProcessGroupKwargs,
     ProjectConfiguration,
     set_seed,
 )
@@ -58,7 +60,7 @@ from transformers import AutoTokenizer, T5EncoderModel
 from args import get_args  # isort:skip
 from dataset import BucketSampler, VideoDatasetWithResizing  # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
-from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings  # isort:skip
+from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings, print_memory, reset_memory  # isort:skip
 
 
 if is_wandb_available():
@@ -184,7 +186,9 @@ def log_validation(
 
     videos = []
     for _ in range(args.num_validation_videos):
-        video = pipe(**pipeline_args, generator=generator, output_type="np").frames[0]
+        # video = pipe(**pipeline_args, generator=generator, output_type="np").frames[0]
+        # TODO: Remove below
+        video = pipe(**pipeline_args, num_inference_steps=1, generator=generator, output_type="np").frames[0]
         videos.append(video)
 
     for tracker in accelerator.trackers:
@@ -213,8 +217,6 @@ def log_validation(
                 }
             )
 
-    clear_objs_and_retain_memory([pipe])
-
     return videos
 
 
@@ -234,13 +236,14 @@ def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
-    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    init_process_group_kwargs = InitProcessGroupKwargs(backend="nccl", timeout=timedelta(seconds=args.nccl_timeout))
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
-        kwargs_handlers=[kwargs],
+        kwargs_handlers=[ddp_kwargs, init_process_group_kwargs],
     )
 
     # Disable AMP for MPS.
@@ -556,6 +559,10 @@ def main(args):
         tracker_name = args.tracker_name or "cogvideox-lora"
         accelerator.init_trackers(tracker_name, config=vars(args))
 
+        accelerator.print("===== Memory before training =====")
+        reset_memory(accelerator.device)
+        print_memory(accelerator.device)
+
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
     num_trainable_parameters = sum(param.numel() for model in params_to_optimize for param in model["params"])
@@ -606,9 +613,6 @@ def main(args):
         disable=not accelerator.is_local_main_process,
     )
     vae_scale_factor_spatial = 2 ** (len(vae.config.block_out_channels) - 1)
-
-    # Delete VAE to save memory
-    clear_objs_and_retain_memory([vae])
 
     # For DeepSpeed training
     model_config = transformer.module.config if hasattr(transformer, "module") else transformer.config
@@ -746,6 +750,11 @@ def main(args):
 
         if accelerator.is_main_process:
             if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
+                accelerator.print("===== Memory before validation =====")
+                print_memory(accelerator.device)
+                reset_memory(accelerator.device)
+                torch.cuda.synchronize(accelerator.device)
+
                 # Create pipeline
                 pipe = CogVideoXPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
@@ -780,6 +789,13 @@ def main(args):
                         epoch=epoch,
                     )
 
+                accelerator.print("===== Memory after validation =====")
+                print_memory(accelerator.device)
+                reset_memory(accelerator.device)
+
+                clear_objs_and_retain_memory([pipe])
+                torch.cuda.synchronize(accelerator.device)
+
     # Save the lora layers
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
@@ -800,7 +816,15 @@ def main(args):
         )
 
         # Cleanup trained models to save memory
-        clear_objs_and_retain_memory([transformer])
+        # clear_objs_and_retain_memory([transformer, text_encoder, vae])
+        del transformer
+        del text_encoder
+        del vae
+        torch.cuda.synchronize(accelerator.device)
+
+        accelerator.print("===== Memory before testing =====")
+        print_memory(accelerator.device)
+        reset_memory(accelerator.device)
 
         # Final test inference
         pipe = CogVideoXPipeline.from_pretrained(
@@ -843,6 +867,11 @@ def main(args):
                     is_final_validation=True,
                 )
                 validation_outputs.extend(video)
+
+        accelerator.print("===== Memory after testing =====")
+        print_memory(accelerator.device)
+        reset_memory(accelerator.device)
+        torch.cuda.synchronize(accelerator.device)
 
         if args.push_to_hub:
             save_model_card(

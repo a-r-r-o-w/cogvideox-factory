@@ -148,8 +148,6 @@ def log_validation(
                 }
             )
 
-    clear_objs_and_retain_memory([pipe])
-
     return videos
 
 
@@ -688,6 +686,8 @@ def main(args):
                         epoch=epoch,
                         is_final_validation=False,
                     )
+
+                clear_objs_and_retain_memory([pipe])
 
     accelerator.wait_for_everyone()
 

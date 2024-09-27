@@ -84,7 +84,6 @@ class VideoDataset(Dataset):
             # that data is not loaded a second time. PRs are welcome for improvements.
             return index
 
-        index = index % self.num_videos
         video = self._preprocess_video(self.video_paths[index])
         return {
             "prompt": self.id_token + self.prompts[index],
@@ -196,4 +195,3 @@ class BucketSampler(Sampler):
                 yield self.buckets[(f, h, w)]
                 del self.buckets[(f, h, w)]
                 self.buckets[(f, h, w)] = []
-                break

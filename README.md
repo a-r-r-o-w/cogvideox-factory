@@ -48,6 +48,18 @@ huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-D
 - Uncompiled SFT works end-to-end on dummy example. Need to test on larger dataset (not priority at the moment)
 - Compiled SFT fails with `THUDM/CogVideoX-2b` throwing the following error (by error, it's more of a graph break situation due to mixin numpy/cpu device when getting sincos positional embeddings).
 
+## Training
+
+TODO
+
+Take a look at `training/*.sh`
+
+Note: Untested on MPS
+
+## Memory requirements
+
+| model |  |
+
 <details>
 <summary> stack trace </summary>
 
