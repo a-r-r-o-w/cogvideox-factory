@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import logging
 import math
 import os
@@ -39,8 +40,7 @@ from diffusers import (
 )
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import (
-    cast_training_params,
-    clear_objs_and_retain_memory,
+    cast_training_params
 )
 from diffusers.utils import (
     check_min_version,
@@ -186,9 +186,7 @@ def log_validation(
 
     videos = []
     for _ in range(args.num_validation_videos):
-        # video = pipe(**pipeline_args, generator=generator, output_type="np").frames[0]
-        # TODO: Remove below
-        video = pipe(**pipeline_args, num_inference_steps=1, generator=generator, output_type="np").frames[0]
+        video = pipe(**pipeline_args, generator=generator, output_type="np").frames[0]
         videos.append(video)
 
     for tracker in accelerator.trackers:
@@ -752,7 +750,6 @@ def main(args):
             if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
                 accelerator.print("===== Memory before validation =====")
                 print_memory(accelerator.device)
-                reset_memory(accelerator.device)
                 torch.cuda.synchronize(accelerator.device)
 
                 # Create pipeline
@@ -793,7 +790,8 @@ def main(args):
                 print_memory(accelerator.device)
                 reset_memory(accelerator.device)
 
-                clear_objs_and_retain_memory([pipe])
+                del pipe
+                gc.collect()
                 torch.cuda.synchronize(accelerator.device)
 
     # Save the lora layers
@@ -816,10 +814,8 @@ def main(args):
         )
 
         # Cleanup trained models to save memory
-        # clear_objs_and_retain_memory([transformer, text_encoder, vae])
-        del transformer
-        del text_encoder
-        del vae
+        del transformer, text_encoder, vae
+        gc.collect()
         torch.cuda.synchronize(accelerator.device)
 
         accelerator.print("===== Memory before testing =====")

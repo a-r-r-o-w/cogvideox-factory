@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import logging
 import math
 import os
@@ -40,7 +41,7 @@ from diffusers import (
     CogVideoXTransformer3DModel,
 )
 from diffusers.optimization import get_scheduler
-from diffusers.training_utils import cast_training_params, clear_objs_and_retain_memory
+from diffusers.training_utils import cast_training_params
 from diffusers.utils import export_to_video, is_wandb_available
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.torch_utils import is_compiled_module
@@ -687,7 +688,9 @@ def main(args):
                         is_final_validation=False,
                     )
 
-                clear_objs_and_retain_memory([pipe])
+                del pipe
+                gc.collect()
+                torch.cuda.synchronize(accelerator.device)
 
     accelerator.wait_for_everyone()
 
@@ -709,7 +712,9 @@ def main(args):
         )
 
         # Cleanup trained models to save memory
-        clear_objs_and_retain_memory([transformer])
+        del transformer, text_encoder, vae
+        gc.collect()
+        torch.cuda.synchronize(accelerator.device)
 
         # Final test inference
         pipe = CogVideoXPipeline.from_pretrained(

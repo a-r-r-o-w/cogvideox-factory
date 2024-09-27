@@ -58,7 +58,16 @@ Note: Untested on MPS
 
 ## Memory requirements
 
-| model |  |
+|       model        | lora rank | optimizer | gradient_checkpointing | memory_before_training | memory_after_validation | memory_after_testing |
+|:------------------:|:---------:|:---------:|:----------------------:|:----------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |    16     |  adamw    |          False         |         12.945         |         39.553          |       23.148         |
+| THUDM/CogVideoX-2b |    16     |  adamw    |          True          |         12.946         |         18.436          |       23.160         |
+| THUDM/CogVideoX-2b |    64     |  adamw    |          False         |         13.035         |         40.051          |       23.430         |
+| THUDM/CogVideoX-2b |    64     |  adamw    |          True          |         13.035         |         18.883          |       23.414         |
+| THUDM/CogVideoX-2b |    256    |  adamw    |          False         |         13.095         |         42.004          |       24.385         |
+| THUDM/CogVideoX-2b |    256    |  adamw    |          True          |         13.095         |         19.307          |       24.381         |
+
+**Note:** `memory_after_validation` is indicative of the peak memory required for training.
 
 <details>
 <summary> stack trace </summary>
