@@ -54,7 +54,7 @@ from transformers import AutoTokenizer, T5EncoderModel
 from args import get_args  # isort:skip
 from dataset import BucketSampler, VideoDatasetWithResizing  # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
-from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings  # isort:skip
+from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings, print_memory, reset_memory  # isort:skip
 
 
 logger = get_logger(__name__)
@@ -465,6 +465,10 @@ def main(args):
         tracker_name = args.tracker_name or "cogvideox-sft"
         accelerator.init_trackers(tracker_name, config=vars(args))
 
+        accelerator.print("===== Memory before training =====")
+        reset_memory(accelerator.device)
+        print_memory(accelerator.device)
+
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
     num_trainable_parameters = sum(param.numel() for model in params_to_optimize for param in model["params"])
@@ -653,6 +657,10 @@ def main(args):
 
         if accelerator.is_main_process:
             if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
+                accelerator.print("===== Memory before validation =====")
+                print_memory(accelerator.device)
+                torch.cuda.synchronize(accelerator.device)
+
                 pipe = CogVideoXPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     transformer=unwrap_model(transformer),
@@ -688,6 +696,10 @@ def main(args):
                         is_final_validation=False,
                     )
 
+                accelerator.print("===== Memory after validation =====")
+                print_memory(accelerator.device)
+                reset_memory(accelerator.device)
+
                 del pipe
                 gc.collect()
                 torch.cuda.synchronize(accelerator.device)
@@ -715,6 +727,10 @@ def main(args):
         del transformer, text_encoder, vae
         gc.collect()
         torch.cuda.synchronize(accelerator.device)
+
+        accelerator.print("===== Memory before testing =====")
+        print_memory(accelerator.device)
+        reset_memory(accelerator.device)
 
         # Final test inference
         pipe = CogVideoXPipeline.from_pretrained(
@@ -752,6 +768,11 @@ def main(args):
                     is_final_validation=True,
                 )
                 validation_outputs.extend(video)
+
+        accelerator.print("===== Memory after testing =====")
+        print_memory(accelerator.device)
+        reset_memory(accelerator.device)
+        torch.cuda.synchronize(accelerator.device)
 
         if args.push_to_hub:
             save_model_card(

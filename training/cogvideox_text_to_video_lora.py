@@ -750,7 +750,6 @@ def main(args):
                 print_memory(accelerator.device)
                 torch.cuda.synchronize(accelerator.device)
 
-                # Create pipeline
                 pipe = CogVideoXPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     transformer=unwrap_model(transformer),
