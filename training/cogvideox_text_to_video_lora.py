@@ -39,9 +39,7 @@ from diffusers import (
     CogVideoXTransformer3DModel,
 )
 from diffusers.optimization import get_scheduler
-from diffusers.training_utils import (
-    cast_training_params
-)
+from diffusers.training_utils import cast_training_params
 from diffusers.utils import (
     check_min_version,
     convert_unet_state_dict_to_peft,
