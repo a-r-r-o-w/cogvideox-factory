@@ -38,6 +38,7 @@ from diffusers import (
     CogVideoXPipeline,
     CogVideoXTransformer3DModel,
 )
+from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params
 from diffusers.utils import (
@@ -322,6 +323,8 @@ def main(args):
     transformer.requires_grad_(False)
     vae.requires_grad_(False)
 
+    VAE_SCALING_FACTOR = vae.config.scaling_factor
+
     # For mixed precision training we cast all non-trainable weights (vae, text_encoder and transformer) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
@@ -483,10 +486,11 @@ def main(args):
         video_column=args.video_column,
         max_num_frames=args.max_num_frames,
         id_token=args.id_token,
+        load_tensors=args.load_tensors,
         random_flip=args.random_flip,
     )
 
-    def collate_fn(data):
+    def collate_fn_without_pre_encoding(data):
         prompts = [x["prompt"] for x in data[0]]
 
         videos = [x["video"] for x in data[0]]
@@ -494,7 +498,23 @@ def main(args):
         videos = videos.to(accelerator.device, dtype=vae.dtype)
         videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
         latent_dist = vae.encode(videos).latent_dist
-        videos = latent_dist.sample() * vae.config.scaling_factor
+        videos = latent_dist.sample() * VAE_SCALING_FACTOR
+        videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+        videos = videos.to(memory_format=torch.contiguous_format).float()
+
+        return {
+            "videos": videos,
+            "prompts": prompts,
+        }
+
+    def collate_fn_with_pre_encoding(data):
+        prompts = [x["prompt"] for x in data[0]]
+        prompts = torch.cat(prompt_embeds)
+        prompts = prompts.to(accelerator.device)
+
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos).to(accelerator.device, dtype=vae.dtype)
+        videos = DiagonalGaussianDistribution(videos).sample() * VAE_SCALING_FACTOR
         videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
         videos = videos.to(memory_format=torch.contiguous_format).float()
 
@@ -507,7 +527,7 @@ def main(args):
         train_dataset,
         batch_size=1,
         sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
-        collate_fn=collate_fn,
+        collate_fn=collate_fn_with_pre_encoding if args.load_tensors else collate_fn_without_pre_encoding,
         num_workers=args.dataloader_num_workers,
     )
 
@@ -613,6 +633,12 @@ def main(args):
     # For DeepSpeed training
     model_config = transformer.module.config if hasattr(transformer, "module") else transformer.config
 
+    if args.load_tensors:
+        del vae, text_encoder
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize(accelerator.device)
+
     for epoch in range(first_epoch, args.num_train_epochs):
         transformer.train()
 
@@ -624,15 +650,16 @@ def main(args):
                 prompts = batch["prompts"]
 
                 # encode prompts
-                prompt_embeds = compute_prompt_embeddings(
-                    tokenizer,
-                    text_encoder,
-                    prompts,
-                    model_config.max_text_seq_length,
-                    accelerator.device,
-                    weight_dtype,
-                    requires_grad=False,
-                )
+                if not args.load_tensors:
+                    prompt_embeds = compute_prompt_embeddings(
+                        tokenizer,
+                        text_encoder,
+                        prompts,
+                        model_config.max_text_seq_length,
+                        accelerator.device,
+                        weight_dtype,
+                        requires_grad=False,
+                    )
 
                 # Sample noise that will be added to the latents
                 noise = torch.randn_like(model_input)
@@ -789,6 +816,7 @@ def main(args):
 
                 del pipe
                 gc.collect()
+                torch.cuda.empty_cache()
                 torch.cuda.synchronize(accelerator.device)
 
     # Save the lora layers
@@ -811,8 +839,13 @@ def main(args):
         )
 
         # Cleanup trained models to save memory
-        del transformer, text_encoder, vae
+        if args.load_tensors:
+            del transformer
+        else:
+            del transformer, text_encoder, vae
+
         gc.collect()
+        torch.cuda.empty_cache()
         torch.cuda.synchronize(accelerator.device)
 
         accelerator.print("===== Memory before testing =====")

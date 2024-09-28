@@ -293,11 +293,11 @@ def save_videos(
         logger.debug(f"Saving video to `{filename}`")
         export_to_video(video, filename.as_posix(), fps=target_fps)
 
-    with open(output_dir.joinpath("videos.txt").as_posix(), "w") as file:
+    with open(output_dir.joinpath("videos.txt").as_posix(), "w", encoding="utf-8") as file:
         for video_path in video_paths:
             file.write(f"videos/{pathlib.Path(video_path).name}\n")
 
-    with open(output_dir.joinpath("prompts.txt").as_posix(), "w") as file:
+    with open(output_dir.joinpath("prompts.txt").as_posix(), "w", encoding="utf-8") as file:
         for prompt in prompts:
             file.write(f"{prompt}\n")
 
@@ -322,23 +322,22 @@ def save_latents_and_embeddings(
 
     for latent, embed, video_path in zip(latents, prompt_embeds, video_paths):
         video_path = pathlib.Path(video_path)
-        latent_filename = latents_dir.joinpath(video_path.name)
-        embed_filename = embeds_dir.joinpath(video_path.name)
+        filename_without_ext = video_path.name.split(".")[0]
 
-        latent_filename = ".".join(latent_filename.split(".")[:-1])  # remove extension
+        latent_filename = latents_dir.joinpath(filename_without_ext)
+        embed_filename = embeds_dir.joinpath(filename_without_ext)
+
         latent_filename = f"{latent_filename}.pt"
-
-        embed_filename = ".".join(embed_filename.split(".")[:-1])  # remove extension
         embed_filename = f"{embed_filename}.pt"
 
         torch.save(latent, latent_filename)
         torch.save(embed, embed_filename)
 
-    with open(output_dir.joinpath("videos.txt").as_posix(), "w") as file:
+    with open(output_dir.joinpath("videos.txt").as_posix(), "w", encoding="utf-8") as file:
         for video_path in video_paths:
             file.write(f"videos/{pathlib.Path(video_path).name}\n")
 
-    with open(output_dir.joinpath("prompts.txt").as_posix(), "w") as file:
+    with open(output_dir.joinpath("prompts.txt").as_posix(), "w", encoding="utf-8") as file:
         for prompt in prompts:
             file.write(f"{prompt}\n")
 

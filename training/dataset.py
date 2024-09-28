@@ -147,7 +147,7 @@ class VideoDataset(Dataset):
         with open(video_path, "r", encoding="utf-8") as file:
             video_paths = [self.data_root.joinpath(line.strip()) for line in file.readlines() if len(line.strip()) > 0]
 
-        if any(not path.is_file() for path in video_paths):
+        if not self.load_tensors and any(not path.is_file() for path in video_paths):
             raise ValueError(
                 f"Expected `{self.video_column=}` to be a path to a file in `{self.data_root=}` containing line-separated paths to video data but found atleast one path that is not a valid file."
             )
@@ -169,8 +169,7 @@ class VideoDataset(Dataset):
 
     def _preprocess_video(self, path: Path) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         if self.load_tensors:
-            frames, prompt_embeds = self._load_preprocessed_latents_and_embeds()
-            return frames, prompt_embeds
+            return self._load_preprocessed_latents_and_embeds(path)
         else:
             video_reader = decord.VideoReader(uri=path.as_posix())
             video_num_frames = len(video_reader)
@@ -187,8 +186,10 @@ class VideoDataset(Dataset):
         filename_without_ext = path.name.split(".")[0]
         pt_filename = f"{filename_without_ext}.pt"
 
-        latents_path = path.parent.joinpath("latents")
-        embeds_path = path.parent.joinpath("embeddings")
+        # The current path is something like: /a/b/c/d/videos/00001.mp4
+        # We need to reach: /a/b/c/d/latents/00001.pt
+        latents_path = path.parent.parent.joinpath("latents")
+        embeds_path = path.parent.parent.joinpath("embeddings")
 
         if not latents_path.exists() or not embeds_path.exists():
             raise ValueError(
@@ -216,21 +217,24 @@ class VideoDatasetWithResizing(VideoDataset):
         super().__init__(*args, **kwargs)
 
     def _preprocess_video(self, path: Path) -> torch.Tensor:
-        video_reader = decord.VideoReader(uri=path.as_posix())
-        video_num_frames = len(video_reader)
-        nearest_frame_bucket = min(T2V_FRAMES, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)))
+        if self.load_tensors:
+            return self._load_preprocessed_latents_and_embeds(path)
+        else:
+            video_reader = decord.VideoReader(uri=path.as_posix())
+            video_num_frames = len(video_reader)
+            nearest_frame_bucket = min(T2V_FRAMES, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)))
 
-        frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
+            frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
 
-        frames = video_reader.get_batch(frame_indices)
-        frames = frames[:nearest_frame_bucket].float()
-        frames = frames.permute(0, 3, 1, 2).contiguous()
+            frames = video_reader.get_batch(frame_indices)
+            frames = frames[:nearest_frame_bucket].float()
+            frames = frames.permute(0, 3, 1, 2).contiguous()
 
-        nearest_res = self._find_nearest_resolution(frames.shape[2], frames.shape[3])
-        frames_resized = torch.stack([resize(frame, nearest_res) for frame in frames], dim=0)
+            nearest_res = self._find_nearest_resolution(frames.shape[2], frames.shape[3])
+            frames_resized = torch.stack([resize(frame, nearest_res) for frame in frames], dim=0)
 
-        frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
-        return frames
+            frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
+            return frames, None
 
     def _find_nearest_resolution(self, height, width):
         nearest_res = min(T2V_RESOLUTIONS, key=lambda x: abs(x[1] - height) + abs(x[2] - width))
