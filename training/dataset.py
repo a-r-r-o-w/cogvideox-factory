@@ -2,7 +2,6 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import decord
 import pandas as pd
 import torch
 from accelerate.logging import get_logger
@@ -11,9 +10,13 @@ from torchvision import transforms
 from torchvision.transforms.functional import resize
 
 
-logger = get_logger(__name__)
+# Must import after torch because this can sometimes lead to a nasty segmentation fault, or stack smashing error
+# Very few bug reports but it happens. Look in decord Github issues for more relevant information.
+import decord  # isort:skip
 
 decord.bridge.set_bridge("torch")
+
+logger = get_logger(__name__)
 
 HEIGHT = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
 WIDTH = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
@@ -31,6 +34,7 @@ class VideoDataset(Dataset):
         video_column: str = "video",
         max_num_frames: int = 49,
         id_token: Optional[str] = None,
+        load_tensors: bool = False,
         random_flip: Optional[float] = None,
     ) -> None:
         super().__init__()
@@ -41,6 +45,7 @@ class VideoDataset(Dataset):
         self.video_column = video_column
         self.max_num_frames = max_num_frames
         self.id_token = id_token or ""
+        self.load_tensors = load_tensors
         self.random_flip = random_flip
 
         if dataset_file is None:
@@ -84,16 +89,42 @@ class VideoDataset(Dataset):
             # that data is not loaded a second time. PRs are welcome for improvements.
             return index
 
-        video = self._preprocess_video(self.video_paths[index])
-        return {
-            "prompt": self.id_token + self.prompts[index],
-            "video": video,
-            "video_metadata": {
-                "num_frames": video.shape[0],
-                "height": video.shape[2],
-                "width": video.shape[3],
-            },
-        }
+        if self.load_tensors:
+            latents, prompt_embeds = self._preprocess_video(self.video_paths[index])
+
+            # This is hardcoded for now.
+            # The VAE's temporal compression ratio is 4.
+            # The VAE's spatial compression ratio is 8.
+            latent_num_frames = latents.size(2)
+            if latent_num_frames % 2 == 0:
+                num_frames = latent_num_frames * 4
+            else:
+                num_frames = (latent_num_frames - 1) * 4 + 1
+
+            height = latents.size(3) * 8
+            width = latents.size(4) * 8
+
+            return {
+                "prompt": prompt_embeds,
+                "video": latents,
+                "video_metadata": {
+                    "num_frames": num_frames,
+                    "height": height,
+                    "width": width,
+                },
+            }
+        else:
+            video, _ = self._preprocess_video(self.video_paths[index])
+
+            return {
+                "prompt": self.id_token + self.prompts[index],
+                "video": video,
+                "video_metadata": {
+                    "num_frames": video.shape[0],
+                    "height": video.shape[2],
+                    "width": video.shape[3],
+                },
+            }
 
     def _load_dataset_from_local_path(self) -> Tuple[List[str], List[str]]:
         if not self.data_root.exists():
@@ -136,17 +167,48 @@ class VideoDataset(Dataset):
 
         return prompts, video_paths
 
-    def _preprocess_video(self, path: Path) -> torch.Tensor:
-        video_reader = decord.VideoReader(uri=path.as_posix())
-        video_num_frames = len(video_reader)
+    def _preprocess_video(self, path: Path) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        if self.load_tensors:
+            frames, prompt_embeds = self._load_preprocessed_latents_and_embeds()
+            return frames, prompt_embeds
+        else:
+            video_reader = decord.VideoReader(uri=path.as_posix())
+            video_num_frames = len(video_reader)
 
-        indices = list(range(0, video_num_frames, video_num_frames // self.max_num_frames))
-        frames = video_reader.get_batch(indices)
-        frames = frames[: self.max_num_frames].float()
-        frames = frames.permute(0, 3, 1, 2).contiguous()
-        frames = torch.stack([self.video_transforms(frame) for frame in frames], dim=0)
+            indices = list(range(0, video_num_frames, video_num_frames // self.max_num_frames))
+            frames = video_reader.get_batch(indices)
+            frames = frames[: self.max_num_frames].float()
+            frames = frames.permute(0, 3, 1, 2).contiguous()
+            frames = torch.stack([self.video_transforms(frame) for frame in frames], dim=0)
 
-        return frames
+            return frames, None
+
+    def _load_preprocessed_latents_and_embeds(self, path: Path) -> Tuple[torch.Tensor, torch.Tensor]:
+        filename_without_ext = path.name.split(".")[0]
+        pt_filename = f"{filename_without_ext}.pt"
+
+        latents_path = path.parent.joinpath("latents")
+        embeds_path = path.parent.joinpath("embeddings")
+
+        if not latents_path.exists() or not embeds_path.exists():
+            raise ValueError(
+                f"When setting the load_tensors parameter to `True`, it is expected that the `{self.data_root=}` contains two folders named `latents` and `embeddings`. However, these folders were not found. Please make sure to have prepared your data correctly using `prepare_data.py`."
+            )
+
+        latent_filepath = latents_path.joinpath(pt_filename)
+        embeds_filepath = embeds_path.joinpath(pt_filename)
+
+        if not latent_filepath.is_file() or not embeds_filepath.is_file():
+            latent_filepath = latent_filepath.as_posix()
+            embeds_filepath = embeds_filepath.as_posix()
+            raise ValueError(
+                f"The file {latent_filepath=} or {embeds_filepath=} could not be found. Please ensure that you've correctly executed `prepare_dataset.py`."
+            )
+
+        latents = torch.load(latent_filepath, map_location="cpu", weights_only=True)
+        embeds = torch.load(embeds_filepath, map_location="cpu", weights_only=True)
+
+        return latents, embeds
 
 
 class VideoDatasetWithResizing(VideoDataset):

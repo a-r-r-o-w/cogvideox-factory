@@ -62,6 +62,11 @@ def _get_dataset_args(parser: argparse.ArgumentParser) -> None:
         help="Identifier token appended to the start of each prompt if provided.",
     )
     parser.add_argument(
+        "--load_tensors",
+        action="store_true",
+        help="Whether to use a pre-encoded tensor dataset of latents and prompt embeddings instead of videos and text prompts. The expected format is that saved by running the `prepare_dataset.py` script.",
+    )
+    parser.add_argument(
         "--random_flip",
         type=float,
         default=None,
