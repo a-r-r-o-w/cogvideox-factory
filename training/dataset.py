@@ -18,11 +18,9 @@ decord.bridge.set_bridge("torch")
 
 logger = get_logger(__name__)
 
-HEIGHT = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
-WIDTH = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
-T2V_FRAMES = [16, 24, 32, 48, 64, 80]
-
-T2V_RESOLUTIONS = [(f, h, w) for h in HEIGHT for w in WIDTH for f in T2V_FRAMES]
+HEIGHT_BUCKETS = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
+WIDTH_BUCKETS = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
+FRAME_BUCKETS = [16, 24, 32, 48, 64, 80]
 
 
 class VideoDataset(Dataset):
@@ -34,6 +32,9 @@ class VideoDataset(Dataset):
         video_column: str = "video",
         max_num_frames: int = 49,
         id_token: Optional[str] = None,
+        height_buckets: List[int] = None,
+        width_buckets: List[int] = None,
+        frame_buckets: List[int] = None,
         load_tensors: bool = False,
         random_flip: Optional[float] = None,
     ) -> None:
@@ -45,8 +46,15 @@ class VideoDataset(Dataset):
         self.video_column = video_column
         self.max_num_frames = max_num_frames
         self.id_token = id_token or ""
+        self.height_buckets = height_buckets or HEIGHT_BUCKETS
+        self.width_buckets = width_buckets or WIDTH_BUCKETS
+        self.frame_buckets = frame_buckets or FRAME_BUCKETS
         self.load_tensors = load_tensors
         self.random_flip = random_flip
+
+        self.resolutions = [
+            (f, h, w) for h in self.height_buckets for w in self.width_buckets for f in self.frame_buckets
+        ]
 
         if dataset_file is None:
             (
@@ -95,14 +103,14 @@ class VideoDataset(Dataset):
             # This is hardcoded for now.
             # The VAE's temporal compression ratio is 4.
             # The VAE's spatial compression ratio is 8.
-            latent_num_frames = latents.size(2)
+            latent_num_frames = latents.size(1)
             if latent_num_frames % 2 == 0:
                 num_frames = latent_num_frames * 4
             else:
                 num_frames = (latent_num_frames - 1) * 4 + 1
 
-            height = latents.size(3) * 8
-            width = latents.size(4) * 8
+            height = latents.size(2) * 8
+            width = latents.size(3) * 8
 
             return {
                 "prompt": prompt_embeds,
@@ -222,7 +230,9 @@ class VideoDatasetWithResizing(VideoDataset):
         else:
             video_reader = decord.VideoReader(uri=path.as_posix())
             video_num_frames = len(video_reader)
-            nearest_frame_bucket = min(T2V_FRAMES, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)))
+            nearest_frame_bucket = min(
+                FRAME_BUCKETS, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
+            )
 
             frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
 
@@ -237,17 +247,17 @@ class VideoDatasetWithResizing(VideoDataset):
             return frames, None
 
     def _find_nearest_resolution(self, height, width):
-        nearest_res = min(T2V_RESOLUTIONS, key=lambda x: abs(x[1] - height) + abs(x[2] - width))
+        nearest_res = min(self.resolutions, key=lambda x: abs(x[1] - height) + abs(x[2] - width))
         return nearest_res[1], nearest_res[2]
 
 
 class BucketSampler(Sampler):
-    def __init__(self, data_source, batch_size: int = 8, shuffle: bool = True) -> None:
+    def __init__(self, data_source: VideoDataset, batch_size: int = 8, shuffle: bool = True) -> None:
         self.data_source = data_source
         self.batch_size = batch_size
         self.shuffle = shuffle
 
-        self.buckets = {resolution: [] for resolution in T2V_RESOLUTIONS}
+        self.buckets = {resolution: [] for resolution in data_source.resolutions}
 
     def __iter__(self):
         for index, data in enumerate(self.data_source):

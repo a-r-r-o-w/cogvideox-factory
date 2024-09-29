@@ -401,6 +401,7 @@ def main(args: Dict[str, Any]) -> None:
 
         del tokenizer, text_encoder
         gc.collect()
+        torch.cuda.empty_cache()
         torch.cuda.synchronize("cuda")
 
         vae = AutoencoderKLCogVideoX.from_pretrained(args.model_id, subfolder="vae", torch_dtype=dtype)
@@ -431,6 +432,7 @@ def main(args: Dict[str, Any]) -> None:
 
         del vae
         gc.collect()
+        torch.cuda.empty_cache()
         torch.cuda.synchronize("cuda")
 
         save_latents_and_embeddings(

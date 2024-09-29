@@ -20,10 +20,12 @@ import os
 import shutil
 from datetime import timedelta
 from pathlib import Path
+from typing import Any, Dict
 
 import diffusers
 import torch
 import transformers
+import wandb
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -42,7 +44,6 @@ from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params
 from diffusers.utils import (
-    check_min_version,
     convert_unet_state_dict_to_peft,
     export_to_video,
     is_wandb_available,
@@ -61,12 +62,6 @@ from dataset import BucketSampler, VideoDatasetWithResizing  # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
 from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings, print_memory, reset_memory  # isort:skip
 
-
-if is_wandb_available():
-    import wandb
-
-# Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.31.0.dev0")
 
 logger = get_logger(__name__)
 
@@ -155,30 +150,18 @@ Please adhere to the licensing terms as described [here](https://huggingface.co/
 
 
 def log_validation(
-    pipe,
-    args,
-    accelerator,
-    pipeline_args,
+    accelerator: Accelerator,
+    pipe: CogVideoXPipeline,
+    args: Dict[str, Any],
+    pipeline_args: Dict[str, Any],
     epoch,
     is_final_validation: bool = False,
 ):
     logger.info(
         f"Running validation... \n Generating {args.num_validation_videos} videos with prompt: {pipeline_args['prompt']}."
     )
-    # We train on the simplified learning objective. If we were previously predicting a variance, we need the scheduler to ignore it
-    scheduler_args = {}
 
-    if "variance_type" in pipe.scheduler.config:
-        variance_type = pipe.scheduler.config.variance_type
-
-        if variance_type in ["learned", "learned_range"]:
-            variance_type = "fixed_small"
-
-        scheduler_args["variance_type"] = variance_type
-
-    pipe.scheduler = CogVideoXDPMScheduler.from_config(pipe.scheduler.config, **scheduler_args)
     pipe = pipe.to(accelerator.device)
-    # pipe.set_progress_bar_config(disable=True)
 
     # run inference
     generator = torch.Generator(device=accelerator.device).manual_seed(args.seed) if args.seed else None
@@ -324,6 +307,7 @@ def main(args):
     vae.requires_grad_(False)
 
     VAE_SCALING_FACTOR = vae.config.scaling_factor
+    VAE_SCALE_FACTOR_SPATIAL = 2 ** (len(vae.config.block_out_channels) - 1)
 
     # For mixed precision training we cast all non-trainable weights (vae, text_encoder and transformer) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
@@ -486,6 +470,9 @@ def main(args):
         video_column=args.video_column,
         max_num_frames=args.max_num_frames,
         id_token=args.id_token,
+        height_buckets=args.height_buckets,
+        width_buckets=args.width_buckets,
+        frame_buckets=args.frame_buckets,
         load_tensors=args.load_tensors,
         random_flip=args.random_flip,
     )
@@ -495,7 +482,7 @@ def main(args):
 
         videos = [x["video"] for x in data[0]]
         videos = torch.stack(videos)
-        videos = videos.to(accelerator.device, dtype=vae.dtype)
+        videos = videos.to(accelerator.device, dtype=weight_dtype)
         videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
         latent_dist = vae.encode(videos).latent_dist
         videos = latent_dist.sample() * VAE_SCALING_FACTOR
@@ -509,11 +496,10 @@ def main(args):
 
     def collate_fn_with_pre_encoding(data):
         prompts = [x["prompt"] for x in data[0]]
-        prompts = torch.cat(prompt_embeds)
-        prompts = prompts.to(accelerator.device)
+        prompts = torch.stack(prompts).to(accelerator.device, dtype=weight_dtype)
 
         videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(accelerator.device, dtype=vae.dtype)
+        videos = torch.stack(videos).to(accelerator.device, dtype=weight_dtype)
         videos = DiagonalGaussianDistribution(videos).sample() * VAE_SCALING_FACTOR
         videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
         videos = videos.to(memory_format=torch.contiguous_format).float()
@@ -628,7 +614,6 @@ def main(args):
         # Only show the progress bar once on each machine.
         disable=not accelerator.is_local_main_process,
     )
-    vae_scale_factor_spatial = 2 ** (len(vae.config.block_out_channels) - 1)
 
     # For DeepSpeed training
     model_config = transformer.module.config if hasattr(transformer, "module") else transformer.config
@@ -646,10 +631,10 @@ def main(args):
             models_to_accumulate = [transformer]
 
             with accelerator.accumulate(models_to_accumulate):
-                model_input = batch["videos"].to(dtype=weight_dtype)  # [B, F, C, H, W]
+                model_input = batch["videos"]
                 prompts = batch["prompts"]
 
-                # encode prompts
+                # Encode prompts
                 if not args.load_tensors:
                     prompt_embeds = compute_prompt_embeddings(
                         tokenizer,
@@ -660,6 +645,8 @@ def main(args):
                         weight_dtype,
                         requires_grad=False,
                     )
+                else:
+                    prompt_embeds = prompts
 
                 # Sample noise that will be added to the latents
                 noise = torch.randn_like(model_input)
@@ -677,10 +664,10 @@ def main(args):
                 # Prepare rotary embeds
                 image_rotary_emb = (
                     prepare_rotary_positional_embeddings(
-                        height=args.height,
-                        width=args.width,
+                        height=height * VAE_SCALE_FACTOR_SPATIAL,
+                        width=width * VAE_SCALE_FACTOR_SPATIAL,
                         num_frames=num_frames,
-                        vae_scale_factor_spatial=vae_scale_factor_spatial,
+                        vae_scale_factor_spatial=VAE_SCALE_FACTOR_SPATIAL,
                         patch_size=model_config.patch_size,
                         attention_head_dim=model_config.attention_head_dim,
                         device=accelerator.device,
@@ -701,6 +688,7 @@ def main(args):
                     image_rotary_emb=image_rotary_emb,
                     return_dict=False,
                 )[0]
+
                 model_pred = scheduler.get_velocity(model_output, noisy_model_input, timesteps)
 
                 alphas_cumprod = scheduler.alphas_cumprod[timesteps]
@@ -780,7 +768,6 @@ def main(args):
                 pipe = CogVideoXPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     transformer=unwrap_model(transformer),
-                    text_encoder=unwrap_model(text_encoder),
                     scheduler=scheduler,
                     revision=args.revision,
                     variant=args.variant,
@@ -802,7 +789,7 @@ def main(args):
                         "width": args.width,
                     }
 
-                    validation_outputs = log_validation(
+                    log_validation(
                         pipe=pipe,
                         args=args,
                         accelerator=accelerator,
@@ -819,8 +806,8 @@ def main(args):
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize(accelerator.device)
 
-    # Save the lora layers
     accelerator.wait_for_everyone()
+
     if accelerator.is_main_process:
         transformer = unwrap_model(transformer)
         dtype = (
@@ -885,9 +872,9 @@ def main(args):
                 }
 
                 video = log_validation(
+                    accelerator=accelerator,
                     pipe=pipe,
                     args=args,
-                    accelerator=accelerator,
                     pipeline_args=pipeline_args,
                     epoch=epoch,
                     is_final_validation=True,
