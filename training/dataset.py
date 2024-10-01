@@ -56,6 +56,12 @@ class VideoDataset(Dataset):
             (f, h, w) for h in self.height_buckets for w in self.width_buckets for f in self.frame_buckets
         ]
 
+        # Two methods of loading data are supported.
+        #   - Using a CSV: caption_column and video_column must be some column in the CSV. One could
+        #     make use of other columns too, such as a motion score or aesthetic score, by modifying the
+        #     logic in CSV processing.
+        #   - Using two files containing line-separate captions and relative paths to videos.
+        # For a more detailed explanation about preparing dataset format, checkout the README.
         if dataset_file is None:
             (
                 self.prompts,
@@ -176,6 +182,16 @@ class VideoDataset(Dataset):
         return prompts, video_paths
 
     def _preprocess_video(self, path: Path) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        r"""
+        Loads a single video, or latent and prompt embedding, based on initialization parameters.
+
+        If returning a video, returns a [F, C, H, W] video tensor, and None for the prompt embedding. Here,
+        F, C, H and W are the frames, channels, height and width of the input video.
+
+        If returning latent/embedding, returns a [F, C, H, W] latent, and the prompt embedding of shape [S, D].
+        F, C, H and W are the frames, channels, height and width of the latent, and S, D are the sequence length
+        and embedding dimension of prompt embeddings.
+        """
         if self.load_tensors:
             return self._load_preprocessed_latents_and_embeds(path)
         else:
