@@ -321,6 +321,12 @@ def save_latents_and_embeddings(
     embeds_dir.mkdir(parents=True, exist_ok=True)
 
     for latent, embed, video_path in zip(latents, prompt_embeds, video_paths):
+        # Need to perform the clone, otherwise the entire `latents` or `prompt_embeds` tensor is
+        # saved for every single video/prompt embedding. This is due to us viewing a slice of a
+        # large tensor when iteratively saving stuff here.
+        latent = latent.clone()
+        embed = embed.clone()
+
         video_path = pathlib.Path(video_path)
         filename_without_ext = video_path.name.split(".")[0]
 

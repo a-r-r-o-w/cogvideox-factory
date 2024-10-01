@@ -22,7 +22,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
         cache_dir="/raid/aryan/cogvideox-sft/"
         output_dir="/raid/aryan/cogvideox-sft__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
-        cmd="accelerate launch --config_file accelerate_configs/compiled_1.yaml --gpu_ids $GPU_IDS cogvideox_text_to_video_sft.py \
+        cmd="accelerate launch --config_file accelerate_configs/compiled_1.yaml --gpu_ids $GPU_IDS training/cogvideox_text_to_video_sft.py \
           --pretrained_model_name_or_path THUDM/CogVideoX-2b \
           --cache_dir $cache_dir \
           --data_root $DATA_ROOT \

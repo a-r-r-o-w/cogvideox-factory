@@ -10,7 +10,7 @@ LR_SCHEDULES=("cosine_with_restarts")
 OPTIMIZERS=("adamw")
 MAX_TRAIN_STEPS=("2")
 
-DATA_ROOT="/raid/aryan/video-dataset-disney/"
+DATA_ROOT="dump"
 CAPTION_COLUMN="prompts.txt"
 VIDEO_COLUMN="videos.txt"
 
@@ -21,7 +21,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
         cache_dir="/raid/aryan/cogvideox-lora/"
         output_dir="/raid/aryan/cogvideox-lora__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
-        cmd="accelerate launch --config_file accelerate_configs/uncompiled_1.yaml --gpu_ids $GPU_IDS cogvideox_text_to_video_lora.py \
+        cmd="accelerate launch --config_file accelerate_configs/uncompiled_1.yaml --gpu_ids $GPU_IDS training/cogvideox_text_to_video_lora.py \
           --pretrained_model_name_or_path THUDM/CogVideoX-2b \
           --cache_dir $cache_dir \
           --data_root $DATA_ROOT \
