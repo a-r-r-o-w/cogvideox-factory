@@ -58,38 +58,85 @@ Note: Untested on MPS
 
 ## Memory requirements
 
-|       model        | lora rank | optimizer | gradient_checkpointing | memory_before_training | memory_after_validation | memory_after_testing |
-|:------------------:|:---------:|:---------:|:----------------------:|:----------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |    16     |  adamw    |          False         |         12.945         |         39.553          |       23.148         |
-| THUDM/CogVideoX-2b |    16     |  adamw    |          True          |         12.946         |         18.436          |       23.160         |
-| THUDM/CogVideoX-2b |    64     |  adamw    |          False         |         13.035         |         40.051          |       23.430         |
-| THUDM/CogVideoX-2b |    64     |  adamw    |          True          |         13.035         |         18.883          |       23.414         |
-| THUDM/CogVideoX-2b |    256    |  adamw    |          False         |         13.095         |         42.004          |       24.385         |
-| THUDM/CogVideoX-2b |    256    |  adamw    |          True          |         13.095         |         19.307          |       24.381         |
+<table align="center">
+<tr>
+  <td align="center"><a href="https://www.youtube.com/watch?v=UvRl4ansfCg"> Slaying OOMs with PyTorch</a></td>
+</tr>
+<tr>
+  <td align="center"><img src="assets/slaying-ooms.png" style="width: 480px; height: 480px;"></td>
+</tr>
+</table>
 
-**Note:** `memory_after_validation` is indicative of the peak memory required for training.
+The memory requirements are reported after running the `training/prepare_dataset.py`, which converts the videos and captions to latents and embeddings. During training, we directly load the latents and embeddings, and do not require the VAE or the T5 text encoder. However, if you perform validation/testing, these must be loaded and increase the amount of required memory. Not performing validation/testing saves a significant amount of memory, which can be used to focus solely on training if you're on smaller VRAM GPUs.
 
 <details>
-<summary> stack trace </summary>
+<summary> AdamW </summary>
 
-```
-skipping cudagraphs due to skipping cudagraphs due to cpu device (cat_3). Found from : 
-   File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/accelerate/utils/operations.py", line 820, in forward
-    return model_forward(*args, **kwargs)
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/accelerate/utils/operations.py", line 808, in __call__
-    return convert_to_fp32(self.model_forward(*args, **kwargs))
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/amp/autocast_mode.py", line 44, in decorate_autocast
-    return func(*args, **kwargs)
-  File "/home/aryan/work/diffusers/src/diffusers/models/transformers/cogvideox_transformer_3d.py", line 446, in forward
-    hidden_states = self.patch_embed(encoder_hidden_states, hidden_states)
-  File "/home/aryan/work/diffusers/src/diffusers/models/embeddings.py", line 435, in forward
-    pos_embedding = self._get_positional_embeddings(height, width, pre_time_compression_frames)
-  File "/home/aryan/work/diffusers/src/diffusers/models/embeddings.py", line 385, in _get_positional_embeddings
-    pos_embedding = get_3d_sincos_pos_embed(
-  File "/home/aryan/work/diffusers/src/diffusers/models/embeddings.py", line 108, in get_3d_sincos_pos_embed
-    grid = np.stack(grid, axis=0)
+|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.764          |         46.918          |       24.234         |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.121          |       24.234         |
+| THUDM/CogVideoX-2b |    64     |          False         |         13.035         |          44.314          |         47.469          |       24.469         |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.036         |          13.035          |         21.564          |       24.500         |
+| THUDM/CogVideoX-2b |    256    |          False         |         13.095         |          45.826          |         48.990          |       25.543         |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          13.095          |         22.344          |       25.537         |
+
+</details>
+
+<details>
+<summary> AdamW (8-bit bitsandbytes) </summary>
+
+|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.732          |         46.887          |        24.195        |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.430          |        24.195        |
+| THUDM/CogVideoX-2b |    64     |          False         |         13.035         |          44.004          |         47.158          |        24.369        |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          13.035          |         21.297          |        24.357        |
+| THUDM/CogVideoX-2b |    256    |          False         |         13.035         |          45.291          |         48.455          |        24.836        |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.035         |          13.035          |         21.625          |        24.869        |
+
+</details>
+
+<details>
+<summary> AdamW (8-bit torchao) </summary>
+
+Currently, errors out with following stack-trace:
+
+```python
+Traceback (most recent call last):               
+  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 915, in <module>                                                                                         
+    main(args)                                   
+  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 719, in main                                                                                             
+    optimizer.step()                                                                              
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/accelerate/optimizer.py", line 159, in step                                                                                           
+    self.scaler.step(self.optimizer, closure)    
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/amp/grad_scaler.py", line 457, in step                                                                                          
+    retval = self._maybe_opt_step(optimizer, optimizer_state, *args, **kwargs)                    
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/amp/grad_scaler.py", line 352, in _maybe_opt_step                                                                               
+    retval = optimizer.step(*args, **kwargs)     
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/accelerate/optimizer.py", line 214, in patched_step                                                                                   
+    return method(*args, **kwargs)               
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/optim/lr_scheduler.py", line 137, in wrapper                                                                                    
+    return func.__get__(opt, opt.__class__)(*args, **kwargs)                                      
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/optim/optimizer.py", line 487, in wrapper                                                                                       
+    out = func(*args, **kwargs)                  
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
+    return func(*args, **kwargs)                 
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torchao/prototype/low_bit_optim/adam.py", line 87, in step                                                                            
+    raise RuntimeError(                          
+RuntimeError: lr was changed to a non-Tensor object. If you want to update lr, please use optim.param_groups[0]['lr'].fill_(new_lr)
 ```
 </details>
+
+<details>
+<summary> AdamW (4-bit torchao) </summary>
+
+Same error as AdamW (8-bit torchao)
+
+</details>
+
+
+**Note:** `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation.
 
 - Make T2V LoRA script up-to-date
 - Make I2V LoRA script up-to-date

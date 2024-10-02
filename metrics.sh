@@ -84,11 +84,14 @@ export TORCH_NCCL_ENABLE_MONITORING=0
 
 GPU_IDS="1"
 LEARNING_RATES=("1e-4")
-LR_SCHEDULES=("cosine_with_restarts")
+# LR_SCHEDULES=("cosine_with_restarts")
+LR_SCHEDULES=("constant")
 OPTIMIZERS=("adamw")
 MAX_TRAIN_STEPS=("2")
 RANK=("16" "64" "256")
 GRADIENT_CHECKPOINTING=("" "--gradient_checkpointing")
+
+ADDITIONAL_FLAGS="--use_8bit --use_torchao"
 
 DATA_ROOT="training/dump"
 CAPTION_COLUMN="prompts.txt"
@@ -138,11 +141,13 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
               --optimizer $optimizer \
               --beta1 0.9 \
               --beta2 0.95 \
+              --beta3 0.99 \
               --weight_decay 0.001 \
               --max_grad_norm 1.0 \
               --allow_tf32 \
               --report_to wandb \
-              --nccl_timeout 1800"
+              --nccl_timeout 1800 \
+              $ADDITIONAL_FLAGS"
             
             echo "Running command: $cmd"
             eval $cmd

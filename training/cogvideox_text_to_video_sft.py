@@ -25,7 +25,6 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
-import wandb
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -50,6 +49,8 @@ from huggingface_hub import create_repo, upload_folder
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
+
+import wandb
 
 
 from args import get_args  # isort:skip

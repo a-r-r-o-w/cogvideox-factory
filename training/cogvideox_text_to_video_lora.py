@@ -25,7 +25,6 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
-import wandb
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -55,6 +54,8 @@ from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dic
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
+
+import wandb
 
 
 from args import get_args  # isort:skip
@@ -168,7 +169,8 @@ def log_validation(
 
     videos = []
     for _ in range(args.num_validation_videos):
-        video = pipe(**pipeline_args, generator=generator, output_type="np").frames[0]
+        # video = pipe(**pipeline_args, generator=generator, output_type="np").frames[0]
+        video = pipe(**pipeline_args, generator=generator, output_type="np", num_inference_steps=1).frames[0]
         videos.append(video)
 
     for tracker in accelerator.trackers:
@@ -459,6 +461,8 @@ def main(args):
         prodigy_use_bias_correction=args.prodigy_use_bias_correction,
         prodigy_safeguard_warmup=args.prodigy_safeguard_warmup,
         use_8bit=args.use_8bit,
+        use_4bit=args.use_4bit,
+        use_torchao=args.use_torchao,
         use_deepspeed=use_deepspeed_optimizer,
     )
 
@@ -704,6 +708,8 @@ def main(args):
                 )
                 loss = loss.mean()
                 accelerator.backward(loss)
+
+                print("optim:", optimizer.param_groups[0]["lr"])
 
                 if accelerator.sync_gradients:
                     gradient_norm_before_clip = get_gradient_norm(transformer.parameters())

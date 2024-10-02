@@ -301,13 +301,21 @@ def _get_optimizer_args(parser: argparse.ArgumentParser) -> None:
         "--optimizer",
         type=lambda s: s.lower(),
         default="adam",
-        choices=["adam", "adamw", "prodigy"],
+        choices=["adam", "adamw", "prodigy", "came"],
         help=("The optimizer type to use."),
     )
     parser.add_argument(
         "--use_8bit",
         action="store_true",
-        help="Whether or not to use 8-bit optimizers from `bitsandbytes`. Ignored if incompatible optimzer selected.",
+        help="Whether or not to use 8-bit optimizers from `bitsandbytes` or `bitsandbytes`.",
+    )
+    parser.add_argument(
+        "--use_4bit",
+        action="store_true",
+        help="Whether or not to use 4-bit optimizers from `torchao`.",
+    )
+    parser.add_argument(
+        "--use_torchao", action="store_true", help="Whether or not to use the `torchao` backend for optimizers."
     )
     parser.add_argument(
         "--beta1",
