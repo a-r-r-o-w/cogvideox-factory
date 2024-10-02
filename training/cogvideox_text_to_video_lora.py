@@ -709,8 +709,6 @@ def main(args):
                 loss = loss.mean()
                 accelerator.backward(loss)
 
-                print("optim:", optimizer.param_groups[0]["lr"])
-
                 if accelerator.sync_gradients:
                     gradient_norm_before_clip = get_gradient_norm(transformer.parameters())
                     accelerator.clip_grad_norm_(transformer.parameters(), args.max_grad_norm)
