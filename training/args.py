@@ -363,6 +363,16 @@ def _get_optimizer_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Remove lr from the denominator of D estimate to avoid issues during warm-up stage.",
     )
+    parser.add_argument(
+        "--use_cpu_offload_optimizer",
+        action="store_true",
+        help="Whether or not to use the CPUOffloadOptimizer from TorchAO to perform optimization step and maintain parameters on the CPU.",
+    )
+    parser.add_argument(
+        "--offload_gradients",
+        action="store_true",
+        help="Whether or not to offload the gradients to CPU when using the CPUOffloadOptimizer from TorchAO.",
+    )
 
 
 def _get_configuration_args(parser: argparse.ArgumentParser) -> None:

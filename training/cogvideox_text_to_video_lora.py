@@ -25,6 +25,7 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
+import wandb
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -54,8 +55,6 @@ from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dic
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
-
-import wandb
 
 
 from args import get_args  # isort:skip
@@ -169,8 +168,7 @@ def log_validation(
 
     videos = []
     for _ in range(args.num_validation_videos):
-        # video = pipe(**pipeline_args, generator=generator, output_type="np").frames[0]
-        video = pipe(**pipeline_args, generator=generator, output_type="np", num_inference_steps=1).frames[0]
+        video = pipe(**pipeline_args, generator=generator, output_type="np").frames[0]
         videos.append(video)
 
     for tracker in accelerator.trackers:
@@ -438,6 +436,7 @@ def main(args):
         "lr": args.learning_rate,
     }
     params_to_optimize = [transformer_parameters_with_lr]
+    num_trainable_parameters = sum(param.numel() for model in params_to_optimize for param in model["params"])
 
     use_deepspeed_optimizer = (
         accelerator.state.deepspeed_plugin is not None
@@ -464,6 +463,8 @@ def main(args):
         use_4bit=args.use_4bit,
         use_torchao=args.use_torchao,
         use_deepspeed=use_deepspeed_optimizer,
+        use_cpu_offload_optimizer=args.use_cpu_offload_optimizer,
+        offload_gradients=args.offload_gradients,
     )
 
     # Dataset and DataLoader
@@ -528,24 +529,31 @@ def main(args):
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
-    if use_deepspeed_scheduler:
-        from accelerate.utils import DummyScheduler
-
-        lr_scheduler = DummyScheduler(
-            name=args.lr_scheduler,
-            optimizer=optimizer,
-            total_num_steps=args.max_train_steps * accelerator.num_processes,
-            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+    if args.use_cpu_offload_optimizer:
+        lr_scheduler = None
+        accelerator.print(
+            "CPU Offload Optimizer cannot be used with DeepSpeed or builtin PyTorch LR Schedulers. If "
+            "you are training with those settings, they will be ignored."
         )
     else:
-        lr_scheduler = get_scheduler(
-            args.lr_scheduler,
-            optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
-            num_training_steps=args.max_train_steps * accelerator.num_processes,
-            num_cycles=args.lr_num_cycles,
-            power=args.lr_power,
-        )
+        if use_deepspeed_scheduler:
+            from accelerate.utils import DummyScheduler
+
+            lr_scheduler = DummyScheduler(
+                name=args.lr_scheduler,
+                optimizer=optimizer,
+                total_num_steps=args.max_train_steps * accelerator.num_processes,
+                num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+            )
+        else:
+            lr_scheduler = get_scheduler(
+                args.lr_scheduler,
+                optimizer=optimizer,
+                num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+                num_training_steps=args.max_train_steps * accelerator.num_processes,
+                num_cycles=args.lr_num_cycles,
+                power=args.lr_power,
+            )
 
     # Prepare everything with our `accelerator`.
     transformer, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
@@ -571,7 +579,6 @@ def main(args):
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
-    num_trainable_parameters = sum(param.numel() for model in params_to_optimize for param in model["params"])
 
     accelerator.print("***** Running training *****")
     accelerator.print(f"  Num trainable parameters = {num_trainable_parameters}")
@@ -718,7 +725,8 @@ def main(args):
                     optimizer.step()
                     optimizer.zero_grad()
 
-                lr_scheduler.step()
+                if not args.use_cpu_offload_optimizer:
+                    lr_scheduler.step()
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
@@ -751,9 +759,10 @@ def main(args):
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
+            last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
             logs = {
                 "loss": loss.detach().item(),
-                "lr": lr_scheduler.get_last_lr()[0],
+                "lr": last_lr,
                 "gradient_norm_before_clip": gradient_norm_before_clip,
                 "gradient_norm_after_clip": gradient_norm_after_clip,
             }

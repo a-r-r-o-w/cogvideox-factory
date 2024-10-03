@@ -1,4 +1,5 @@
 import gc
+import inspect
 from typing import Optional, Tuple, Union
 
 import torch
@@ -25,6 +26,8 @@ def get_optimizer(
     use_4bit: bool = False,
     use_torchao: bool = False,
     use_deepspeed: bool = False,
+    use_cpu_offload_optimizer: bool = False,
+    offload_gradients: bool = False,
 ) -> torch.optim.Optimizer:
     optimizer_name = optimizer_name.lower()
 
@@ -43,7 +46,7 @@ def get_optimizer(
     if use_8bit and use_4bit:
         raise ValueError("Cannot set both `use_8bit` and `use_4bit` to True.")
 
-    if use_torchao and (use_8bit or use_4bit):
+    if (use_torchao and (use_8bit or use_4bit)) or use_cpu_offload_optimizer:
         try:
             import torchao
 
@@ -83,12 +86,11 @@ def get_optimizer(
         else:
             optimizer_class = bnb.optim.AdamW8bit if use_8bit else torch.optim.AdamW
 
-        optimizer = optimizer_class(
-            params_to_optimize,
-            betas=(beta1, beta2),
-            eps=epsilon,
-            weight_decay=weight_decay,
-        )
+        init_kwargs = {
+            "betas": (beta1, beta2),
+            "eps": epsilon,
+            "weight_decay": weight_decay,
+        }
 
     elif optimizer_name == "adam":
         if use_torchao:
@@ -98,12 +100,11 @@ def get_optimizer(
         else:
             optimizer_class = bnb.optim.Adam8bit if use_8bit else torch.optim.Adam
 
-        optimizer = optimizer_class(
-            params_to_optimize,
-            betas=(beta1, beta2),
-            eps=epsilon,
-            weight_decay=weight_decay,
-        )
+        init_kwargs = {
+            "betas": (beta1, beta2),
+            "eps": epsilon,
+            "weight_decay": weight_decay,
+        }
 
     elif optimizer_name == "prodigy":
         try:
@@ -118,17 +119,16 @@ def get_optimizer(
                 "Learning rate is too low. When using prodigy, it's generally better to set learning rate around 1.0"
             )
 
-        optimizer = optimizer_class(
-            params_to_optimize,
-            lr=learning_rate,
-            betas=(beta1, beta2),
-            beta3=beta3,
-            weight_decay=weight_decay,
-            eps=epsilon,
-            decouple=prodigy_decouple,
-            use_bias_correction=prodigy_use_bias_correction,
-            safeguard_warmup=prodigy_safeguard_warmup,
-        )
+        init_kwargs = {
+            "lr": learning_rate,
+            "betas": (beta1, beta2),
+            "beta3": beta3,
+            "eps": epsilon,
+            "weight_decay": weight_decay,
+            "decouple": prodigy_decouple,
+            "use_bias_correction": prodigy_use_bias_correction,
+            "safeguard_warmup": prodigy_safeguard_warmup,
+        }
 
     elif optimizer_name == "came":
         try:
@@ -138,13 +138,24 @@ def get_optimizer(
 
         optimizer_class = came_pytorch.CAME
 
-        optimizer = optimizer_class(
-            params_to_optimize,
-            lr=learning_rate,
-            eps=(1e-30, 1e-16),
-            betas=(beta1, beta2, beta3),
-            weight_decay=weight_decay,
+        init_kwargs = {
+            "lr": learning_rate,
+            "eps": (1e-30, 1e-16),
+            "betas": (beta1, beta2, beta3),
+            "weight_decay": weight_decay,
+        }
+
+    if use_cpu_offload_optimizer:
+        from torchao.prototype.low_bit_optim import CPUOffloadOptimizer
+
+        if "fused" in inspect.signature(optimizer_class.__init__).parameters:
+            init_kwargs.update({"fused": True})
+
+        optimizer = CPUOffloadOptimizer(
+            params_to_optimize, optimizer_class=optimizer_class, offload_gradients=offload_gradients, **init_kwargs
         )
+    else:
+        optimizer = optimizer_class(**init_kwargs)
 
     return optimizer
 

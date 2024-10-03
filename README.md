@@ -144,6 +144,63 @@ Same error as AdamW (8-bit torchao)
 
 </details>
 
+<details>
+<summary> AdamW + CPUOffloadOptimizer (with gradient offloading) </summary>
+
+|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.705          |         46.859          |       24.180         |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.395          |       24.180         |
+| THUDM/CogVideoX-2b |    64     |          False         |         13.035         |          43.916          |         47.070          |       24.234         |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          13.035          |         20.887          |       24.266         |
+| THUDM/CogVideoX-2b |    256    |          False         |         13.095         |          44.947          |         48.111          |       24.607         |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.095         |          13.095          |         21.391          |       24.635         |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          19.742          |         28.533          |       38.002         |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          20.006          |         29.107          |       38.785         |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          20.771          |         30.078          |       39.559         |
+
+> [!NOTE]
+> Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+
+</details>
+
+<details>
+<summary> AdamW (8-bit bitsandbytes) </summary>
+
+Currently, errors out with the following stack-trace:
+
+```python
+  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 925, in <module>                                                                                         
+    main(args)                                                                                                                                                                                      
+  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 727, in main                                                                                             
+    optimizer.step()                                                                                                                                                                                
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
+    return func(*args, **kwargs)                                                                                                                                                                    
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torchao/prototype/low_bit_optim/cpu_offload.py", line 87, in step                                                                     
+    self.optim_dict[p_cuda].step()                                                                                                                                                                  
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/optim/optimizer.py", line 487, in wrapper                                                                                       
+    out = func(*args, **kwargs)                                                                                                                                                                     
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
+    return func(*args, **kwargs)                                                                                                                                                                    
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/optim/optimizer.py", line 287, in step                                                                                   
+    self.update_step(group, p, gindex, pindex)                                                                                                                                                      
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
+    return func(*args, **kwargs)                                                                                                                                                                    
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/optim/optimizer.py", line 546, in update_step                                                                            
+    F.optimizer_update_8bit_blockwise(                                                                                                                                                              
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/functional.py", line 1774, in optimizer_update_8bit_blockwise                                                            
+    prev_device = pre_call(g.device)                                                                                                                                                                
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/functional.py", line 463, in pre_call                                                                                    
+    torch.cuda.set_device(device)                                                                                                                                                                   
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/cuda/__init__.py", line 476, in set_device                                                                                      
+    device = _get_device_index(device)           
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/cuda/_utils.py", line 34, in _get_device_index                                                                                  
+    raise ValueError(f"Expected a cuda device, but got: {device}")                                
+ValueError: Expected a cuda device, but got: cpu
+```
+
+</details>
+
 
 > [!NOTE]
 > `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
