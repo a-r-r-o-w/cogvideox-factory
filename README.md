@@ -70,6 +70,8 @@ Supported and verified memory optimizations for training include:
 > [!IMPORTANT]
 > The memory requirements are reported after running the `training/prepare_dataset.py`, which converts the videos and captions to latents and embeddings. During training, we directly load the latents and embeddings, and do not require the VAE or the T5 text encoder. However, if you perform validation/testing, these must be loaded and increase the amount of required memory. Not performing validation/testing saves a significant amount of memory, which can be used to focus solely on training if you're on smaller VRAM GPUs.
 
+### LoRA finetuning
+
 <details>
 <summary> AdamW </summary>
 
@@ -202,6 +204,7 @@ ValueError: Expected a cuda device, but got: cpu
 
 </details>
 
+### Full finetuning
 
 > [!NOTE]
 > `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.

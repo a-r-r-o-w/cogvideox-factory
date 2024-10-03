@@ -155,7 +155,7 @@ def get_optimizer(
             params_to_optimize, optimizer_class=optimizer_class, offload_gradients=offload_gradients, **init_kwargs
         )
     else:
-        optimizer = optimizer_class(**init_kwargs)
+        optimizer = optimizer_class(params_to_optimize, **init_kwargs)
 
     return optimizer
 
