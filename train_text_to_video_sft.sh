@@ -1,20 +1,29 @@
-# export TORCH_LOGS="+dynamo,recompiles,graph_breaks"
-# export TORCHDYNAMO_VERBOSE=1
+export TORCH_LOGS="+dynamo,recompiles,graph_breaks"
+export TORCHDYNAMO_VERBOSE=1
 export WANDB_MODE="offline"
 export NCCL_P2P_DISABLE=1
 export TORCH_NCCL_ENABLE_MONITORING=0
 
-GPU_IDS="3"
+GPU_IDS="0"
+
+# Training Configurations
+# Experiment with as many hyperparameters as you want!
 LEARNING_RATES=("1e-4")
 LR_SCHEDULES=("cosine_with_restarts")
 OPTIMIZERS=("adamw")
 MAX_TRAIN_STEPS=("20000")
 
-# DATA_ROOT="/raid/aryan/dataset-cogvideox/"
-DATA_ROOT="/raid/aryan/openvid-1m"
-CAPTION_COLUMN="prompts.txt"
+# Single GPU uncompiled training
+ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_1.yaml"
+
+# Absolute path to where the data is located. Make sure to have read the README for how to prepare data.
+# This example assumes you downloaded an already prepared dataset from HF CLI as follows:
+#   huggingface-cli download --repo-type dataset Wild-Heart/Tom-and-Jerry-VideoGeneration-Dataset --local-dir /path/to/my/datasets/tom-and-jerry-dataset
+DATA_ROOT="/path/to/my/datasets/tom-and-jerry-dataset"
+CAPTION_COLUMN="captions.txt"
 VIDEO_COLUMN="videos.txt"
 
+# Launch experiments with different hyperparameters
 for learning_rate in "${LEARNING_RATES[@]}"; do
   for lr_schedule in "${LR_SCHEDULES[@]}"; do
     for optimizer in "${OPTIMIZERS[@]}"; do
@@ -22,8 +31,8 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
         cache_dir="/raid/aryan/cogvideox-sft/"
         output_dir="/raid/aryan/cogvideox-sft__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
-        cmd="accelerate launch --config_file accelerate_configs/uncompiled_1.yaml --gpu_ids $GPU_IDS training/cogvideox_text_to_video_sft.py \
-          --pretrained_model_name_or_path THUDM/CogVideoX-2b \
+        cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox_text_to_video_sft.py \
+          --pretrained_model_name_or_path THUDM/CogVideoX-5b \
           --cache_dir $cache_dir \
           --data_root $DATA_ROOT \
           --caption_column $CAPTION_COLUMN \
@@ -31,7 +40,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --height_buckets 480 \
           --width_buckets 720 \
           --frame_buckets 49 \
-          --validation_prompt \"a man wearing a bicycle helmet, riding a bike through a forested area. The man is wearing a black t-shirt and appears to be in motion, as suggested by the slight blur of the background. The forest is lush and green, with trees and foliage filling the background. The man's helmet is white with a black visor, and he is looking directly at the camera with a slight smile on his face. The style of the video is casual and candid, capturing a moment of outdoor activity:::A panda, dressed in a small, red jacket and a tiny hat, sits on a wooden stool in a serene bamboo forest. The panda's fluffy paws strum a miniature acoustic guitar, producing soft, melodic tunes. Nearby, a few other pandas gather, watching curiously and some clapping in rhythm. Sunlight filters through the tall bamboo, casting a gentle glow on the scene. The panda's face is expressive, showing concentration and joy as it plays. The background includes a small, flowing stream and vibrant green foliage, enhancing the peaceful and magical atmosphere of this unique musical performance\" \
+          --validation_prompt \"Tom, the mischievous gray cat, is sprawled out on a vibrant red pillow, his body relaxed and his eyes half-closed, as if he's just woken up or is about to doze off. His white paws are stretched out in front of him, and his tail is casually draped over the edge of the pillow. The setting appears to be a cozy corner of a room, with a warm yellow wall in the background and a hint of a wooden floor. The scene captures a rare moment of tranquility for Tom, contrasting with his usual energetic and playful demeanor:::A panda, dressed in a small, red jacket and a tiny hat, sits on a wooden stool in a serene bamboo forest. The panda's fluffy paws strum a miniature acoustic guitar, producing soft, melodic tunes. Nearby, a few other pandas gather, watching curiously and some clapping in rhythm. Sunlight filters through the tall bamboo, casting a gentle glow on the scene. The panda's face is expressive, showing concentration and joy as it plays. The background includes a small, flowing stream and vibrant green foliage, enhancing the peaceful and magical atmosphere of this unique musical performance\" \
           --validation_prompt_separator ::: \
           --num_validation_videos 1 \
           --validation_epochs 1 \
@@ -42,7 +51,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --train_batch_size 1 \
           --max_train_steps $steps \
           --checkpointing_steps 2000 \
-          --gradient_accumulation_steps 1 \
+          --gradient_accumulation_steps 4 \
           --gradient_checkpointing \
           --learning_rate $learning_rate \
           --lr_scheduler $lr_schedule \

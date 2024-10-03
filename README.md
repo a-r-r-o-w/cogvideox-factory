@@ -43,11 +43,6 @@ As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disne
 huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir video-dataset-disney
 ```
 
-#### Rough notes and TODOs:
-
-- Uncompiled SFT works end-to-end on dummy example. Need to test on larger dataset (not priority at the moment)
-- Compiled SFT fails with `THUDM/CogVideoX-2b` throwing the following error (by error, it's more of a graph break situation due to mixin numpy/cpu device when getting sincos positional embeddings).
-
 ## Training
 
 TODO
@@ -67,7 +62,13 @@ Note: Untested on MPS
 </tr>
 </table>
 
-The memory requirements are reported after running the `training/prepare_dataset.py`, which converts the videos and captions to latents and embeddings. During training, we directly load the latents and embeddings, and do not require the VAE or the T5 text encoder. However, if you perform validation/testing, these must be loaded and increase the amount of required memory. Not performing validation/testing saves a significant amount of memory, which can be used to focus solely on training if you're on smaller VRAM GPUs.
+Supported and verified memory optimizations for training include:
+- `CPUOffloadOptimizer` from [TorchAO](https://github.com/pytorch/ao). You can read about its capabilities and limitations [here](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload). In short, it allows you to use the CPU for storing trainable parameters and gradients. This results in the optimizer step happening on the CPU, which requires a fast CPU optimizer, such as `torch.AdamW(fused=True)` or applying `torch.compile` on the optimizer step. Additionally, it is recommended to not `torch.compile` your model for training. Gradient clipping and accumulation is not supported yet either.
+- Low-bit optimizers from [bitsandbytes](https://huggingface.co/docs/bitsandbytes/optimizers). TODO: to test and make [TorchAO](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) ones work
+- TODO: DeepSpeed ZeRO
+
+> [!IMPORTANT]
+> The memory requirements are reported after running the `training/prepare_dataset.py`, which converts the videos and captions to latents and embeddings. During training, we directly load the latents and embeddings, and do not require the VAE or the T5 text encoder. However, if you perform validation/testing, these must be loaded and increase the amount of required memory. Not performing validation/testing saves a significant amount of memory, which can be used to focus solely on training if you're on smaller VRAM GPUs.
 
 <details>
 <summary> AdamW </summary>
@@ -205,11 +206,10 @@ ValueError: Expected a cuda device, but got: cpu
 > [!NOTE]
 > `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
 
-- Make T2V LoRA script up-to-date
-- Make I2V LoRA script up-to-date
-- Make scripts compatible with DDP
-- Make scripts compatible with FSDP
-- Make scripts compatible with DeepSpeed
-- Test scripts with memory-efficient optimizer
-- Test scripts with quantization using torchao, CPUOffloadOptimizer, etc.
-- Make 5B lora finetuning work in under 24GB
+- [ ] Make scripts compatible with DDP
+- [ ] Make scripts compatible with FSDP
+- [ ] Make scripts compatible with DeepSpeed
+- [x] Test scripts with memory-efficient optimizer from bitsandbytes
+- [x] Test scripts with CPUOffloadOptimizer, etc.
+- [ ] Test scripts with torchao quantization, and low bit memory optimizers, etc.
+- [x] Make 5B lora finetuning work in under 24GB

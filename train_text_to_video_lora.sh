@@ -4,26 +4,34 @@ export WANDB_MODE="offline"
 export NCCL_P2P_DISABLE=1
 export TORCH_NCCL_ENABLE_MONITORING=0
 
-GPU_IDS="2"
-LEARNING_RATES=("1e-4")
-LR_SCHEDULES=("cosine_with_restarts")
-OPTIMIZERS=("adamw")
-MAX_TRAIN_STEPS=("2")
+GPU_IDS="0"
 
-DATA_ROOT="dump"
-CAPTION_COLUMN="prompts.txt"
+# Training Configurations
+# Experiment with as many hyperparameters as you want!
+LEARNING_RATES=("1e-4" "1e-3")
+LR_SCHEDULES=("cosine_with_restarts")
+OPTIMIZERS=("adamw", "adam")
+MAX_TRAIN_STEPS=("3000")
+
+# Single GPU uncompiled training
+ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_1.yaml"
+
+# Absolute path to where the data is located. Make sure to have read the README for how to prepare data.
+# This example assumes you downloaded an already prepared dataset from HF CLI as follows:
+#   huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir /path/to/my/datasets/disney-dataset
+DATA_ROOT="/path/to/my/datasets/disney-dataset"
+CAPTION_COLUMN="prompt.txt"
 VIDEO_COLUMN="videos.txt"
 
+# Launch experiments with different hyperparameters
 for learning_rate in "${LEARNING_RATES[@]}"; do
   for lr_schedule in "${LR_SCHEDULES[@]}"; do
     for optimizer in "${OPTIMIZERS[@]}"; do
       for steps in "${MAX_TRAIN_STEPS[@]}"; do
-        cache_dir="/raid/aryan/cogvideox-lora/"
-        output_dir="/raid/aryan/cogvideox-lora__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
+        output_dir="/path/to/my/modles/cogvideox-lora__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
-        cmd="accelerate launch --config_file accelerate_configs/uncompiled_1.yaml --gpu_ids $GPU_IDS training/cogvideox_text_to_video_lora.py \
-          --pretrained_model_name_or_path THUDM/CogVideoX-2b \
-          --cache_dir $cache_dir \
+        cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox_text_to_video_lora.py \
+          --pretrained_model_name_or_path THUDM/CogVideoX-5b \
           --data_root $DATA_ROOT \
           --caption_column $CAPTION_COLUMN \
           --video_column $VIDEO_COLUMN \
@@ -31,13 +39,13 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --height_buckets 480 \
           --width_buckets 720 \
           --frame_buckets 49 \
-          --validation_prompt \"BW_STYLE A black and white animated scene unfolds with an anthropomorphic goat surrounded by musical notes and symbols, suggesting a playful environment. Mickey Mouse appears, leaning forward in curiosity as the goat remains still. The goat then engages with Mickey, who bends down to converse or react. The dynamics shift as Mickey grabs the goat, potentially in surprise or playfulness, amidst a minimalistic background. The scene captures the evolving relationship between the two characters in a whimsical, animated setting, emphasizing their interactions and emotions::: BW_STYLE A panda, dressed in a small, red jacket and a tiny hat, sits on a wooden stool in a serene bamboo forest. The panda's fluffy paws strum a miniature acoustic guitar, producing soft, melodic tunes. Nearby, a few other pandas gather, watching curiously and some clapping in rhythm. Sunlight filters through the tall bamboo, casting a gentle glow on the scene. The panda's face is expressive, showing concentration and joy as it plays. The background includes a small, flowing stream and vibrant green foliage, enhancing the peaceful and magical atmosphere of this unique musical performance\" \
+          --validation_prompt \"BW_STYLE A black and white animated scene unfolds with an anthropomorphic goat surrounded by musical notes and symbols, suggesting a playful environment. Mickey Mouse appears, leaning forward in curiosity as the goat remains still. The goat then engages with Mickey, who bends down to converse or react. The dynamics shift as Mickey grabs the goat, potentially in surprise or playfulness, amidst a minimalistic background. The scene captures the evolving relationship between the two characters in a whimsical, animated setting, emphasizing their interactions and emotions:::BW_STYLE A panda, dressed in a small, red jacket and a tiny hat, sits on a wooden stool in a serene bamboo forest. The panda's fluffy paws strum a miniature acoustic guitar, producing soft, melodic tunes. Nearby, a few other pandas gather, watching curiously and some clapping in rhythm. Sunlight filters through the tall bamboo, casting a gentle glow on the scene. The panda's face is expressive, showing concentration and joy as it plays. The background includes a small, flowing stream and vibrant green foliage, enhancing the peaceful and magical atmosphere of this unique musical performance\" \
           --validation_prompt_separator ::: \
           --num_validation_videos 1 \
           --validation_epochs 10 \
           --seed 42 \
-          --rank 64 \
-          --lora_alpha 64 \
+          --rank 128 \
+          --lora_alpha 128 \
           --mixed_precision fp16 \
           --output_dir $output_dir \
           --max_num_frames 49 \
@@ -48,7 +56,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --gradient_checkpointing \
           --learning_rate $learning_rate \
           --lr_scheduler $lr_schedule \
-          --lr_warmup_steps 200 \
+          --lr_warmup_steps 400 \
           --lr_num_cycles 1 \
           --enable_slicing \
           --enable_tiling \
