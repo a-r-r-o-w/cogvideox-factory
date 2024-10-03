@@ -25,7 +25,6 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
-import wandb
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -51,6 +50,8 @@ from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dic
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
+
+import wandb
 
 
 from args import get_args  # isort:skip
@@ -627,6 +628,8 @@ def main(args):
         torch.cuda.empty_cache()
         torch.cuda.synchronize(accelerator.device)
 
+    alphas_cumprod = scheduler.alphas_cumprod.to(accelerator.device, dtype=torch.float32)
+
     for epoch in range(first_epoch, args.num_train_epochs):
         transformer.train()
 
@@ -694,8 +697,7 @@ def main(args):
 
                 model_pred = scheduler.get_velocity(model_output, noisy_model_input, timesteps)
 
-                alphas_cumprod = scheduler.alphas_cumprod[timesteps]
-                weights = 1 / (1 - alphas_cumprod)
+                weights = 1 / (1 - alphas_cumprod[timesteps])
                 while len(weights.shape) < len(model_pred.shape):
                     weights = weights.unsqueeze(-1)
 
