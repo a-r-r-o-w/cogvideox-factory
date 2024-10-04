@@ -96,6 +96,11 @@ def _get_dataset_args(parser: argparse.ArgumentParser) -> None:
         default=0,
         help="Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process.",
     )
+    parser.add_argument(
+        "--pin_memory",
+        action="store_true",
+        help="Whether or not to use the pinned memory setting in pytorch dataloader.",
+    )
 
 
 def _get_validation_args(parser: argparse.ArgumentParser) -> None:
