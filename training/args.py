@@ -301,13 +301,21 @@ def _get_optimizer_args(parser: argparse.ArgumentParser) -> None:
         "--optimizer",
         type=lambda s: s.lower(),
         default="adam",
-        choices=["adam", "adamw", "prodigy"],
+        choices=["adam", "adamw", "prodigy", "came"],
         help=("The optimizer type to use."),
     )
     parser.add_argument(
         "--use_8bit",
         action="store_true",
-        help="Whether or not to use 8-bit optimizers from `bitsandbytes`. Ignored if incompatible optimzer selected.",
+        help="Whether or not to use 8-bit optimizers from `bitsandbytes` or `bitsandbytes`.",
+    )
+    parser.add_argument(
+        "--use_4bit",
+        action="store_true",
+        help="Whether or not to use 4-bit optimizers from `torchao`.",
+    )
+    parser.add_argument(
+        "--use_torchao", action="store_true", help="Whether or not to use the `torchao` backend for optimizers."
     )
     parser.add_argument(
         "--beta1",
@@ -354,6 +362,16 @@ def _get_optimizer_args(parser: argparse.ArgumentParser) -> None:
         "--prodigy_safeguard_warmup",
         action="store_true",
         help="Remove lr from the denominator of D estimate to avoid issues during warm-up stage.",
+    )
+    parser.add_argument(
+        "--use_cpu_offload_optimizer",
+        action="store_true",
+        help="Whether or not to use the CPUOffloadOptimizer from TorchAO to perform optimization step and maintain parameters on the CPU.",
+    )
+    parser.add_argument(
+        "--offload_gradients",
+        action="store_true",
+        help="Whether or not to offload the gradients to CPU when using the CPUOffloadOptimizer from TorchAO.",
     )
 
 

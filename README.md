@@ -43,11 +43,6 @@ As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disne
 huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir video-dataset-disney
 ```
 
-#### Rough notes and TODOs:
-
-- Uncompiled SFT works end-to-end on dummy example. Need to test on larger dataset (not priority at the moment)
-- Compiled SFT fails with `THUDM/CogVideoX-2b` throwing the following error (by error, it's more of a graph break situation due to mixin numpy/cpu device when getting sincos positional embeddings).
-
 ## Training
 
 TODO
@@ -58,44 +53,205 @@ Note: Untested on MPS
 
 ## Memory requirements
 
-|       model        | lora rank | optimizer | gradient_checkpointing | memory_before_training | memory_after_validation | memory_after_testing |
-|:------------------:|:---------:|:---------:|:----------------------:|:----------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |    16     |  adamw    |          False         |         12.945         |         39.553          |       23.148         |
-| THUDM/CogVideoX-2b |    16     |  adamw    |          True          |         12.946         |         18.436          |       23.160         |
-| THUDM/CogVideoX-2b |    64     |  adamw    |          False         |         13.035         |         40.051          |       23.430         |
-| THUDM/CogVideoX-2b |    64     |  adamw    |          True          |         13.035         |         18.883          |       23.414         |
-| THUDM/CogVideoX-2b |    256    |  adamw    |          False         |         13.095         |         42.004          |       24.385         |
-| THUDM/CogVideoX-2b |    256    |  adamw    |          True          |         13.095         |         19.307          |       24.381         |
+<table align="center">
+<tr>
+  <td align="center"><a href="https://www.youtube.com/watch?v=UvRl4ansfCg"> Slaying OOMs with PyTorch</a></td>
+</tr>
+<tr>
+  <td align="center"><img src="assets/slaying-ooms.png" style="width: 480px; height: 480px;"></td>
+</tr>
+</table>
 
-**Note:** `memory_after_validation` is indicative of the peak memory required for training.
+Supported and verified memory optimizations for training include:
+- `CPUOffloadOptimizer` from [TorchAO](https://github.com/pytorch/ao). You can read about its capabilities and limitations [here](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload). In short, it allows you to use the CPU for storing trainable parameters and gradients. This results in the optimizer step happening on the CPU, which requires a fast CPU optimizer, such as `torch.AdamW(fused=True)` or applying `torch.compile` on the optimizer step. Additionally, it is recommended to not `torch.compile` your model for training. Gradient clipping and accumulation is not supported yet either.
+- Low-bit optimizers from [bitsandbytes](https://huggingface.co/docs/bitsandbytes/optimizers). TODO: to test and make [TorchAO](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) ones work
+- TODO: DeepSpeed ZeRO
+
+> [!IMPORTANT]
+> The memory requirements are reported after running the `training/prepare_dataset.py`, which converts the videos and captions to latents and embeddings. During training, we directly load the latents and embeddings, and do not require the VAE or the T5 text encoder. However, if you perform validation/testing, these must be loaded and increase the amount of required memory. Not performing validation/testing saves a significant amount of memory, which can be used to focus solely on training if you're on smaller VRAM GPUs.
+
+### LoRA finetuning
 
 <details>
-<summary> stack trace </summary>
+<summary> AdamW </summary>
 
-```
-skipping cudagraphs due to skipping cudagraphs due to cpu device (cat_3). Found from : 
-   File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/accelerate/utils/operations.py", line 820, in forward
-    return model_forward(*args, **kwargs)
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/accelerate/utils/operations.py", line 808, in __call__
-    return convert_to_fp32(self.model_forward(*args, **kwargs))
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/amp/autocast_mode.py", line 44, in decorate_autocast
-    return func(*args, **kwargs)
-  File "/home/aryan/work/diffusers/src/diffusers/models/transformers/cogvideox_transformer_3d.py", line 446, in forward
-    hidden_states = self.patch_embed(encoder_hidden_states, hidden_states)
-  File "/home/aryan/work/diffusers/src/diffusers/models/embeddings.py", line 435, in forward
-    pos_embedding = self._get_positional_embeddings(height, width, pre_time_compression_frames)
-  File "/home/aryan/work/diffusers/src/diffusers/models/embeddings.py", line 385, in _get_positional_embeddings
-    pos_embedding = get_3d_sincos_pos_embed(
-  File "/home/aryan/work/diffusers/src/diffusers/models/embeddings.py", line 108, in get_3d_sincos_pos_embed
-    grid = np.stack(grid, axis=0)
+With `train_batch_size = 1`:
+
+|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.764          |         46.918          |       24.234         |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.121          |       24.234         |
+| THUDM/CogVideoX-2b |    64     |          False         |         13.035         |          44.314          |         47.469          |       24.469         |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.036         |          13.035          |         21.564          |       24.500         |
+| THUDM/CogVideoX-2b |    256    |          False         |         13.095         |          45.826          |         48.990          |       25.543         |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          13.095          |         22.344          |       25.537         |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          19.742          |         28.746          |       38.123         |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          20.818          |         30.338          |       38.738         |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          22.119          |         31.939          |       41.537         |
+
+With `train_batch_size = 4`:
+
+|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.803          |         21.814          |       24.322         |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          22.254          |         22.254          |       24.572         |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          22.020          |         22.033          |       25.574         |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          46.492          |         46.492          |       38.197         |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          47.805          |         47.805          |       39.365         |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.268          |         47.332          |       41.008         |
+
+> [!NOTE]
+> Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+
+</details>
+
+<details>
+<summary> AdamW (8-bit bitsandbytes) </summary>
+
+With `train_batch_size = 1`:
+
+|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.732          |         46.887          |        24.195        |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.430          |        24.195        |
+| THUDM/CogVideoX-2b |    64     |          False         |         13.035         |          44.004          |         47.158          |        24.369        |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          13.035          |         21.297          |        24.357        |
+| THUDM/CogVideoX-2b |    256    |          False         |         13.035         |          45.291          |         48.455          |        24.836        |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.035         |          13.035          |         21.625          |        24.869        |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          19.742          |         28.602          |        38.049        |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          20.818          |         29.359          |        38.520        |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          21.352          |         30.727          |        39.596        |
+
+With `train_batch_size = 4`:
+
+|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.734          |         21.775          |       24.281         |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.036         |          21.941          |         21.941          |       24.445         |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          22.020          |         22.266          |       24.943         |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          46.320          |         46.326          |       38.104         |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          46.820          |         46.820          |       38.588         |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.920          |         47.980          |       40.002         |
+
+</details>
+
+<details>
+<summary> AdamW (8-bit torchao) </summary>
+
+Currently, errors out with following stack-trace:
+
+```python
+Traceback (most recent call last):               
+  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 915, in <module>                                                                                         
+    main(args)                                   
+  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 719, in main                                                                                             
+    optimizer.step()                                                                              
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/accelerate/optimizer.py", line 159, in step                                                                                           
+    self.scaler.step(self.optimizer, closure)    
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/amp/grad_scaler.py", line 457, in step                                                                                          
+    retval = self._maybe_opt_step(optimizer, optimizer_state, *args, **kwargs)                    
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/amp/grad_scaler.py", line 352, in _maybe_opt_step                                                                               
+    retval = optimizer.step(*args, **kwargs)     
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/accelerate/optimizer.py", line 214, in patched_step                                                                                   
+    return method(*args, **kwargs)               
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/optim/lr_scheduler.py", line 137, in wrapper                                                                                    
+    return func.__get__(opt, opt.__class__)(*args, **kwargs)                                      
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/optim/optimizer.py", line 487, in wrapper                                                                                       
+    out = func(*args, **kwargs)                  
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
+    return func(*args, **kwargs)                 
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torchao/prototype/low_bit_optim/adam.py", line 87, in step                                                                            
+    raise RuntimeError(                          
+RuntimeError: lr was changed to a non-Tensor object. If you want to update lr, please use optim.param_groups[0]['lr'].fill_(new_lr)
 ```
 </details>
 
-- Make T2V LoRA script up-to-date
-- Make I2V LoRA script up-to-date
-- Make scripts compatible with DDP
-- Make scripts compatible with FSDP
-- Make scripts compatible with DeepSpeed
-- Test scripts with memory-efficient optimizer
-- Test scripts with quantization using torchao, CPUOffloadOptimizer, etc.
-- Make 5B lora finetuning work in under 24GB
+<details>
+<summary> AdamW (4-bit torchao) </summary>
+
+Same error as AdamW (8-bit torchao)
+
+</details>
+
+<details>
+<summary> AdamW + CPUOffloadOptimizer (with gradient offloading) </summary>
+
+With `train_batch_size = 1`:
+
+|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.705          |         46.859          |       24.180         |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.395          |       24.180         |
+| THUDM/CogVideoX-2b |    64     |          False         |         13.035         |          43.916          |         47.070          |       24.234         |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          13.035          |         20.887          |       24.266         |
+| THUDM/CogVideoX-2b |    256    |          False         |         13.095         |          44.947          |         48.111          |       24.607         |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.095         |          13.095          |         21.391          |       24.635         |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          19.742          |         28.533          |       38.002         |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          20.006          |         29.107          |       38.785         |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          20.771          |         30.078          |       39.559         |
+
+With `train_batch_size = 4`:
+
+|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.709          |         21.762          |       24.254         |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          21.844          |         21.855          |       24.338         |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          22.020          |         22.031          |       24.709         |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          46.262          |         46.297          |       38.400         |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          46.561          |         46.574          |       38.840         |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.268          |         47.332          |       39.623         |
+
+> [!NOTE]
+> Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+
+</details>
+
+<details>
+<summary> AdamW (8-bit bitsandbytes) + CPUOffloadOptimizer (with gradient offloading) </summary>
+
+Currently, errors out with the following stack-trace:
+
+```python
+  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 925, in <module>                                                                                         
+    main(args)                                                                                                                                                                                      
+  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 727, in main                                                                                             
+    optimizer.step()                                                                                                                                                                                
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
+    return func(*args, **kwargs)                                                                                                                                                                    
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torchao/prototype/low_bit_optim/cpu_offload.py", line 87, in step                                                                     
+    self.optim_dict[p_cuda].step()                                                                                                                                                                  
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/optim/optimizer.py", line 487, in wrapper                                                                                       
+    out = func(*args, **kwargs)                                                                                                                                                                     
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
+    return func(*args, **kwargs)                                                                                                                                                                    
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/optim/optimizer.py", line 287, in step                                                                                   
+    self.update_step(group, p, gindex, pindex)                                                                                                                                                      
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
+    return func(*args, **kwargs)                                                                                                                                                                    
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/optim/optimizer.py", line 546, in update_step                                                                            
+    F.optimizer_update_8bit_blockwise(                                                                                                                                                              
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/functional.py", line 1774, in optimizer_update_8bit_blockwise                                                            
+    prev_device = pre_call(g.device)                                                                                                                                                                
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/functional.py", line 463, in pre_call                                                                                    
+    torch.cuda.set_device(device)                                                                                                                                                                   
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/cuda/__init__.py", line 476, in set_device                                                                                      
+    device = _get_device_index(device)           
+  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/cuda/_utils.py", line 34, in _get_device_index                                                                                  
+    raise ValueError(f"Expected a cuda device, but got: {device}")                                
+ValueError: Expected a cuda device, but got: cpu
+```
+
+</details>
+
+### Full finetuning
+
+> [!NOTE]
+> `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
+
+- [ ] Make scripts compatible with DDP
+- [ ] Make scripts compatible with FSDP
+- [ ] Make scripts compatible with DeepSpeed
+- [x] Test scripts with memory-efficient optimizer from bitsandbytes
+- [x] Test scripts with CPUOffloadOptimizer, etc.
+- [ ] Test scripts with torchao quantization, and low bit memory optimizers, etc.
+- [x] Make 5B lora finetuning work in under 24GB

@@ -1,0 +1,13 @@
+accelerate
+bitsandbytes
+diffusers
+transformers
+huggingface_hub
+hf_transfer
+peft
+decord
+wandb
+pandas
+torch
+torchvision
+torchao
