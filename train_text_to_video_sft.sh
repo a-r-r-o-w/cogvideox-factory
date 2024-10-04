@@ -28,12 +28,10 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
   for lr_schedule in "${LR_SCHEDULES[@]}"; do
     for optimizer in "${OPTIMIZERS[@]}"; do
       for steps in "${MAX_TRAIN_STEPS[@]}"; do
-        cache_dir="/raid/aryan/cogvideox-sft/"
-        output_dir="/raid/aryan/cogvideox-sft__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
+        output_dir="/path/to/my/models/cogvideox-sft__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
         cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox_text_to_video_sft.py \
           --pretrained_model_name_or_path THUDM/CogVideoX-5b \
-          --cache_dir $cache_dir \
           --data_root $DATA_ROOT \
           --caption_column $CAPTION_COLUMN \
           --video_column $VIDEO_COLUMN \
@@ -45,7 +43,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --num_validation_videos 1 \
           --validation_epochs 1 \
           --seed 42 \
-          --mixed_precision fp16 \
+          --mixed_precision bf16 \
           --output_dir $output_dir \
           --max_num_frames 49 \
           --train_batch_size 1 \
