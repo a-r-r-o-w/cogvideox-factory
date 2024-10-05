@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 
-# For folder structure dataset: python3 prepare_dataset.py --model_id THUDM/CogVideoX-2b --data_root /raid/aryan/video-dataset-disney/ --caption_column prompts.txt --video_column videos.txt --output_dir dump --height 480 --width 720 --max_num_frames 49 --max_sequence_length 226 --target_fps 8 --batch_size 1 --dtype fp32
-# For latent/embed structure dataset: python3 prepare_dataset.py --model_id THUDM/CogVideoX-2b --data_root /raid/aryan/video-dataset-disney/ --caption_column prompts.txt --video_column videos.txt --output_dir dump --height 480 --width 720 --max_num_frames 49 --max_sequence_length 226 --target_fps 8 --batch_size 1 --dtype fp32 --save_tensors
-
 import argparse
 import gc
+import os
 import pathlib
 import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 import torch
+import torch.distributed as dist
 from diffusers import AutoencoderKLCogVideoX
 from diffusers.utils import export_to_video, get_logger
 from torchvision import transforms
 from transformers import T5EncoderModel, T5Tokenizer
+from tqdm import tqdm
 
-
-# Must import after importing torch, otherwise there's a nasty segfault when loading text_encoder/vae
 import decord  # isort:skip
 
 decord.bridge.set_bridge("torch")
@@ -104,7 +102,7 @@ def get_args() -> Dict[str, Any]:
 
 def load_dataset_from_local_path(
     data_root: pathlib.Path, caption_column: str, video_column: str
-) -> Tuple[List[str], List[str]]:
+) -> Tuple[List[str], List[pathlib.Path]]:
     if not data_root.exists():
         raise ValueError("Root folder for videos does not exist")
 
@@ -127,7 +125,7 @@ def load_dataset_from_local_path(
 
     if any(not path.is_file() for path in video_paths):
         raise ValueError(
-            f"Expected `{video_column=}` to be a path to a file in `{data_root=}` containing line-separated paths to video data but found atleast one path that is not a valid file."
+            f"Expected `{video_column}` to be a path to a file in `{data_root}` containing line-separated paths to video data but found at least one path that is not a valid file."
         )
 
     return prompts, video_paths
@@ -135,7 +133,7 @@ def load_dataset_from_local_path(
 
 def load_dataset_from_csv(
     data_root: pathlib.Path, dataset_file: pathlib.Path, caption_column: str, video_column: str
-) -> Tuple[List[str], List[str]]:
+) -> Tuple[List[str], List[pathlib.Path]]:
     df = pd.read_csv(dataset_file)
     prompts = df[caption_column].tolist()
     video_paths = df[video_column].tolist()
@@ -143,7 +141,7 @@ def load_dataset_from_csv(
 
     if any(not path.is_file() for path in video_paths):
         raise ValueError(
-            f"Expected `{video_column=}` to be a path to a file in `{data_root=}` containing line-separated paths to video data but found atleast one path that is not a valid file."
+            f"Expected `{video_column}` to be a path to a file in `{data_root}` containing line-separated paths to video data but found at least one path that is not a valid file."
         )
 
     return prompts, video_paths
@@ -151,7 +149,7 @@ def load_dataset_from_csv(
 
 def load_and_preprocess_video(
     path: pathlib.Path, height: int, width: int, max_num_frames: int, video_transforms, num_threads: int = 0
-) -> torch.Tensor:
+) -> Optional[torch.Tensor]:
     frames = None
 
     try:
@@ -160,11 +158,11 @@ def load_and_preprocess_video(
 
         if video_num_frames < max_num_frames:
             logger.warning(
-                f"Video at `{path.as_posix()}` should have atleast `{max_num_frames=}`, but got only `{video_num_frames=}`. Skipping it."
+                f"Video at `{path.as_posix()}` should have at least `{max_num_frames=}`, but got only `{video_num_frames=}`. Skipping it."
             )
-            return
+            return None
 
-        indices = list(range(0, video_num_frames, video_num_frames // max_num_frames))
+        indices = list(range(0, video_num_frames, max(video_num_frames // max_num_frames, 1)))
         frames: torch.Tensor = video_reader.get_batch(indices)
         frames = frames[:max_num_frames].float()
         frames = frames.permute(0, 3, 1, 2).contiguous()
@@ -241,7 +239,7 @@ def encode_prompt(
 def compute_prompt_embeddings(
     tokenizer: T5Tokenizer,
     text_encoder: T5EncoderModel,
-    prompt: str,
+    prompts: List[str],
     max_sequence_length: int,
     device: torch.device,
     dtype: torch.dtype,
@@ -251,7 +249,7 @@ def compute_prompt_embeddings(
         prompt_embeds = encode_prompt(
             tokenizer,
             text_encoder,
-            prompt,
+            prompts,
             num_videos_per_prompt=1,
             max_sequence_length=max_sequence_length,
             device=device,
@@ -262,7 +260,7 @@ def compute_prompt_embeddings(
             prompt_embeds = encode_prompt(
                 tokenizer,
                 text_encoder,
-                prompt,
+                prompts,
                 num_videos_per_prompt=1,
                 max_sequence_length=max_sequence_length,
                 device=device,
@@ -272,7 +270,7 @@ def compute_prompt_embeddings(
 
 
 def save_videos(
-    videos: torch.Tensor, video_paths: List[str], prompts: List[str], output_dir: pathlib.Path, target_fps: int = 8
+    videos: torch.Tensor, video_paths: List[pathlib.Path], prompts: List[str], output_dir: pathlib.Path, target_fps: int = 8
 ) -> None:
     assert videos.size(0) == len(video_paths)
 
@@ -289,13 +287,13 @@ def save_videos(
     videos_pil = [[to_pil_image(frame) for frame in video] for video in videos]
 
     for video, video_path in zip(videos_pil, video_paths):
-        filename = video_dir.joinpath(pathlib.Path(video_path).name)
+        filename = video_dir.joinpath(video_path.name)
         logger.debug(f"Saving video to `{filename}`")
         export_to_video(video, filename.as_posix(), fps=target_fps)
 
     with open(output_dir.joinpath("videos.txt").as_posix(), "w", encoding="utf-8") as file:
         for video_path in video_paths:
-            file.write(f"videos/{pathlib.Path(video_path).name}\n")
+            file.write(f"videos/{video_path.name}\n")
 
     with open(output_dir.joinpath("prompts.txt").as_posix(), "w", encoding="utf-8") as file:
         for prompt in prompts:
@@ -305,7 +303,7 @@ def save_videos(
 def save_latents_and_embeddings(
     latents: torch.Tensor,
     prompt_embeds: torch.Tensor,
-    video_paths: List[str],
+    video_paths: List[pathlib.Path],
     prompts: List[str],
     output_dir: pathlib.Path,
 ) -> None:
@@ -321,27 +319,20 @@ def save_latents_and_embeddings(
     embeds_dir.mkdir(parents=True, exist_ok=True)
 
     for latent, embed, video_path in zip(latents, prompt_embeds, video_paths):
-        # Need to perform the clone, otherwise the entire `latents` or `prompt_embeds` tensor is
-        # saved for every single video/prompt embedding. This is due to us viewing a slice of a
-        # large tensor when iteratively saving stuff here.
         latent = latent.clone()
         embed = embed.clone()
 
-        video_path = pathlib.Path(video_path)
-        filename_without_ext = video_path.name.split(".")[0]
+        filename_without_ext = video_path.stem
 
-        latent_filename = latents_dir.joinpath(filename_without_ext)
-        embed_filename = embeds_dir.joinpath(filename_without_ext)
-
-        latent_filename = f"{latent_filename}.pt"
-        embed_filename = f"{embed_filename}.pt"
+        latent_filename = latents_dir.joinpath(f"{filename_without_ext}.pt")
+        embed_filename = embeds_dir.joinpath(f"{filename_without_ext}.pt")
 
         torch.save(latent, latent_filename)
         torch.save(embed, embed_filename)
 
     with open(output_dir.joinpath("videos.txt").as_posix(), "w", encoding="utf-8") as file:
         for video_path in video_paths:
-            file.write(f"videos/{pathlib.Path(video_path).name}\n")
+            file.write(f"videos/{video_path.name}\n")
 
     with open(output_dir.joinpath("prompts.txt").as_posix(), "w", encoding="utf-8") as file:
         for prompt in prompts:
@@ -349,7 +340,23 @@ def save_latents_and_embeddings(
 
 
 @torch.no_grad()
-def main(args: Dict[str, Any]) -> None:
+def main():
+    args = get_args()
+
+    # Initialize distributed processing
+    if 'LOCAL_RANK' in os.environ:
+        local_rank = int(os.environ['LOCAL_RANK'])
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="nccl")
+        world_size = dist.get_world_size()
+        rank = dist.get_rank()
+    else:
+        # Single GPU
+        local_rank = 0
+        world_size = 1
+        rank = 0
+        torch.cuda.set_device(local_rank)
+
     data_root = pathlib.Path(args.data_root)
     dataset_file = None
     if args.dataset_file:
@@ -367,10 +374,18 @@ def main(args: Dict[str, Any]) -> None:
         ]
     )
 
+    # Preprocess videos with progress bar
     prompts_usable = []
     video_paths_usable = []
     videos = []
-    for prompt, path in zip(prompts, video_paths):
+
+    # Only show progress bar on the main process
+    if rank == 0:
+        iterator = tqdm(zip(prompts, video_paths), total=len(prompts), desc="Load and Preprocess videos")
+    else:
+        iterator = zip(prompts, video_paths)
+
+    for prompt, path in iterator:
         video = load_and_preprocess_video(
             path, args.height, args.width, args.max_num_frames, video_transforms, args.num_decode_threads
         )
@@ -378,7 +393,30 @@ def main(args: Dict[str, Any]) -> None:
             prompts_usable.append(prompt)
             video_paths_usable.append(path)
             videos.append(video)
+
+    if len(videos) == 0:
+        logger.error("No usable videos found after preprocessing.")
+        return
+
     videos = torch.stack(videos)
+
+    # Split data among GPUs
+    if world_size > 1:
+        total_samples = len(prompts_usable)
+        samples_per_gpu = total_samples // world_size
+        start_index = rank * samples_per_gpu
+        end_index = start_index + samples_per_gpu
+        if rank == world_size - 1:
+            end_index = total_samples  # Make sure the last GPU gets the remaining data
+
+        # Slice the data
+        prompts_usable = prompts_usable[start_index:end_index]
+        video_paths_usable = video_paths_usable[start_index:end_index]
+        videos = videos[start_index:end_index]
+    else:
+        pass
+
+    device = torch.device(f"cuda:{local_rank}")
 
     if not args.save_tensors:
         save_videos(videos, video_paths_usable, prompts_usable, pathlib.Path(args.output_dir), args.target_fps)
@@ -386,10 +424,16 @@ def main(args: Dict[str, Any]) -> None:
         dtype = DTYPE_MAPPING[args.dtype]
         tokenizer = T5Tokenizer.from_pretrained(args.model_id, subfolder="tokenizer")
         text_encoder = T5EncoderModel.from_pretrained(args.model_id, subfolder="text_encoder", torch_dtype=dtype)
-        text_encoder = text_encoder.to("cuda")
+        text_encoder = text_encoder.to(device)
 
         prompt_embeds_list = []
-        for start_index in range(0, len(prompts_usable), args.batch_size):
+
+        if rank == 0:
+            iterator = tqdm(range(0, len(prompts_usable), args.batch_size), desc="Encoding prompts")
+        else:
+            iterator = range(0, len(prompts_usable), args.batch_size)
+
+        for start_index in iterator:
             end_index = min(len(prompts_usable), start_index + args.batch_size)
             batch_prompts = prompts_usable[start_index:end_index]
 
@@ -398,20 +442,20 @@ def main(args: Dict[str, Any]) -> None:
                 text_encoder,
                 batch_prompts,
                 max_sequence_length=args.max_sequence_length,
-                device="cuda",
+                device=device,
                 dtype=dtype,
             )
-            prompt_embeds_list.append(prompt_embeds)
+            prompt_embeds_list.append(prompt_embeds.to("cpu"))
 
-        prompt_embeds = torch.cat(prompt_embeds_list).to("cpu")
+        prompt_embeds = torch.cat(prompt_embeds_list)
 
         del tokenizer, text_encoder
         gc.collect()
         torch.cuda.empty_cache()
-        torch.cuda.synchronize("cuda")
+        torch.cuda.synchronize(device)
 
         vae = AutoencoderKLCogVideoX.from_pretrained(args.model_id, subfolder="vae", torch_dtype=dtype)
-        vae = vae.to("cuda")
+        vae = vae.to(device)
 
         if args.use_slicing:
             vae.enable_slicing()
@@ -419,11 +463,17 @@ def main(args: Dict[str, Any]) -> None:
             vae.enable_tiling()
 
         encoded_videos = []
-        for start_index in range(0, len(video_paths_usable), args.batch_size):
+
+        if rank == 0:
+            iterator = tqdm(range(0, len(video_paths_usable), args.batch_size), desc="Encoding videos")
+        else:
+            iterator = range(0, len(video_paths_usable), args.batch_size)
+
+        for start_index in iterator:
             end_index = min(len(video_paths_usable), start_index + args.batch_size)
             batch_videos = videos[start_index:end_index]
 
-            batch_videos = batch_videos.to("cuda")
+            batch_videos = batch_videos.to(device)
             batch_videos = batch_videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
 
             if args.use_slicing:
@@ -432,18 +482,27 @@ def main(args: Dict[str, Any]) -> None:
             else:
                 encoded_video = vae._encode(batch_videos)
 
-            encoded_videos.append(encoded_video)
+            encoded_videos.append(encoded_video.to("cpu"))
 
-        encoded_videos = torch.cat(encoded_videos).to("cpu")
+        encoded_videos = torch.cat(encoded_videos)
 
         del vae
         gc.collect()
         torch.cuda.empty_cache()
-        torch.cuda.synchronize("cuda")
+        torch.cuda.synchronize(device)
+
+        # Ensure that only one process creates the output directories
+        if world_size > 1:
+            dist.barrier()
 
         save_latents_and_embeddings(
             encoded_videos, prompt_embeds, video_paths_usable, prompts_usable, pathlib.Path(args.output_dir)
         )
+
+    # Finalize distributed processing
+    if world_size > 1:
+        dist.barrier()
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
@@ -455,4 +514,4 @@ if __name__ == "__main__":
         args.max_num_frames % 4 == 0 or args.max_num_frames % 4 == 1
     ), "`--max_num_frames` must be of form 4 * k or 4 * k + 1 to be compatible with VAE."
 
-    main(args)
+    main()

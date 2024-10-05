@@ -1,4 +1,9 @@
-# Finetuning CogVideoX
+# CogVideoX Factory
+
+## Introduction
+
+This is a repos for CogVideoX Fine-tuning.
+
 
 
 ## Dataset Preparation
