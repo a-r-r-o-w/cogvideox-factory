@@ -779,6 +779,8 @@ def main(args):
                     pipe.vae.enable_slicing()
                 if args.enable_tiling:
                     pipe.vae.enable_tiling()
+                if args.enable_model_cpu_offload:
+                    pipe.enable_model_cpu_offload()
 
                 validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
                 for validation_prompt in validation_prompts:
@@ -853,6 +855,8 @@ def main(args):
             pipe.vae.enable_slicing()
         if args.enable_tiling:
             pipe.vae.enable_tiling()
+        if args.enable_model_cpu_offload:
+            pipe.enable_model_cpu_offload()
 
         # Load LoRA weights
         lora_scaling = args.lora_alpha / args.rank
