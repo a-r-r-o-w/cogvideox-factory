@@ -13,8 +13,9 @@ import torch.distributed as dist
 from diffusers import AutoencoderKLCogVideoX
 from diffusers.utils import export_to_video, get_logger
 from torchvision import transforms
-from transformers import T5EncoderModel, T5Tokenizer
 from tqdm import tqdm
+from transformers import T5EncoderModel, T5Tokenizer
+
 
 import decord  # isort:skip
 
@@ -270,7 +271,11 @@ def compute_prompt_embeddings(
 
 
 def save_videos(
-    videos: torch.Tensor, video_paths: List[pathlib.Path], prompts: List[str], output_dir: pathlib.Path, target_fps: int = 8
+    videos: torch.Tensor,
+    video_paths: List[pathlib.Path],
+    prompts: List[str],
+    output_dir: pathlib.Path,
+    target_fps: int = 8,
 ) -> None:
     assert videos.size(0) == len(video_paths)
 
@@ -344,8 +349,8 @@ def main():
     args = get_args()
 
     # Initialize distributed processing
-    if 'LOCAL_RANK' in os.environ:
-        local_rank = int(os.environ['LOCAL_RANK'])
+    if "LOCAL_RANK" in os.environ:
+        local_rank = int(os.environ["LOCAL_RANK"])
         torch.cuda.set_device(local_rank)
         dist.init_process_group(backend="nccl")
         world_size = dist.get_world_size()
