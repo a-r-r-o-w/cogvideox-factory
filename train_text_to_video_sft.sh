@@ -55,7 +55,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --gradient_checkpointing \
           --learning_rate $learning_rate \
           --lr_scheduler $lr_schedule \
-          --lr_warmup_steps 200 \
+          --lr_warmup_steps 800 \
           --lr_num_cycles 1 \
           --enable_slicing \
           --enable_tiling \
@@ -65,7 +65,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --weight_decay 0.001 \
           --max_grad_norm 1.0 \
           --allow_tf32 \
-          --report_to wandb
+          --report_to wandb \
           --nccl_timeout 1800"
         
         echo "Running command: $cmd"
