@@ -2,6 +2,8 @@
 
 MODEL_ID="THUDM/CogVideoX-2b"
 
+NUM_GPUS=8
+
 # For more details on the expected data format, please refer to the README.
 DATA_ROOT="/path/to/my/datasets/video-dataset"  # This needs to be the path to the base directory where your videos are located.
 CAPTION_COLUMN="prompts.txt"
@@ -17,19 +19,20 @@ DTYPE=fp32
 
 # To create a folder-style dataset structure without pre-encoding videos and captions'
 CMD_WITHOUT_PRE_ENCODING="\
-  python3 training/prepare_dataset.py \
-    --model_id $MODEL_ID \
-    --data_root $DATA_ROOT \
-    --caption_column $CAPTION_COLUMN \
-    --video_column $VIDEO_COLUMN \
-    --output_dir $OUTPUT_DIR \
-    --height $HEIGHT \
-    --width $WIDTH \
-    --max_num_frames $MAX_NUM_FRAMES \
-    --max_sequence_length $MAX_SEQUENCE_LENGTH \
-    --target_fps $TARGET_FPS \
-    --batch_size $BATCH_SIZE \
-    --dtype $DTYPE
+  torchrun --nproc_per_node=$NUM_GPUS \
+    training/prepare_dataset.py \
+      --model_id $MODEL_ID \
+      --data_root $DATA_ROOT \
+      --caption_column $CAPTION_COLUMN \
+      --video_column $VIDEO_COLUMN \
+      --output_dir $OUTPUT_DIR \
+      --height $HEIGHT \
+      --width $WIDTH \
+      --max_num_frames $MAX_NUM_FRAMES \
+      --max_sequence_length $MAX_SEQUENCE_LENGTH \
+      --target_fps $TARGET_FPS \
+      --batch_size $BATCH_SIZE \
+      --dtype $DTYPE
 "
 
 CMD_WITH_PRE_ENCODING="$CMD_WITHOUT_PRE_ENCODING --save_tensors"

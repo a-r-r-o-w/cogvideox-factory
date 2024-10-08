@@ -452,7 +452,9 @@ def main():
             )
             prompt_embeds_list.append(prompt_embeds.to("cpu"))
 
-        prompt_embeds = torch.cat(prompt_embeds_list)
+        prompt_embeds = None
+        if len(prompt_embeds_list) > 0:
+            prompt_embeds = torch.cat(prompt_embeds_list)
 
         del tokenizer, text_encoder
         gc.collect()
@@ -467,7 +469,7 @@ def main():
         if args.use_tiling:
             vae.enable_tiling()
 
-        encoded_videos = []
+        encoded_videos_list = []
 
         if rank == 0:
             iterator = tqdm(range(0, len(video_paths_usable), args.batch_size), desc="Encoding videos")
@@ -487,9 +489,11 @@ def main():
             else:
                 encoded_video = vae._encode(batch_videos)
 
-            encoded_videos.append(encoded_video.to("cpu"))
+            encoded_videos_list.append(encoded_video.to("cpu"))
 
-        encoded_videos = torch.cat(encoded_videos)
+        encoded_videos = None
+        if len(encoded_videos_list) > 0:
+            encoded_videos = torch.cat(encoded_videos_list)
 
         del vae
         gc.collect()
@@ -500,9 +504,11 @@ def main():
         if world_size > 1:
             dist.barrier()
 
-        save_latents_and_embeddings(
-            encoded_videos, prompt_embeds, video_paths_usable, prompts_usable, pathlib.Path(args.output_dir)
-        )
+        if prompt_embeds is not None:
+            assert encoded_videos is not None
+            save_latents_and_embeddings(
+                encoded_videos, prompt_embeds, video_paths_usable, prompts_usable, pathlib.Path(args.output_dir)
+            )
 
     # Finalize distributed processing
     if world_size > 1:
