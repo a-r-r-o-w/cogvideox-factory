@@ -315,7 +315,7 @@ def main(args):
             "bf16" in accelerator.state.deepspeed_plugin.deepspeed_config
             and accelerator.state.deepspeed_plugin.deepspeed_config["bf16"]["enabled"]
         ):
-            weight_dtype = torch.float16
+            weight_dtype = torch.bfloat16
     else:
         if accelerator.mixed_precision == "fp16":
             weight_dtype = torch.float16
@@ -631,7 +631,7 @@ def main(args):
 
                 videos = latent_dist.sample() * VAE_SCALING_FACTOR
                 videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
-                videos = videos.to(memory_format=torch.contiguous_format).float()
+                videos = videos.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
                 model_input = videos
 
                 # Encode prompts
@@ -646,7 +646,7 @@ def main(args):
                         requires_grad=False,
                     )
                 else:
-                    prompt_embeds = prompts
+                    prompt_embeds = prompts.to(dtype=weight_dtype)
 
                 # Sample noise that will be added to the latents
                 noise = torch.randn_like(model_input)
