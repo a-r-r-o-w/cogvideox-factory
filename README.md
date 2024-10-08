@@ -246,9 +246,69 @@ ValueError: Expected a cuda device, but got: cpu
 ### Full finetuning
 
 > [!NOTE]
+> Trying to run full finetuning without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+
+<details>
+<summary> AdamW </summary>
+
+With `train_batch_size = 1`:
+
+|       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |          True          |         16.396         |          33.934          |         43.848          |       37.520         |
+| THUDM/CogVideoX-5b |          True          |         30.061         |          OOM             |         OOM             |       OOM            |
+
+With `train_batch_size = 4`:
+
+|       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |          True          |         16.396         |          38.281          |         48.341          |       37.544         |
+| THUDM/CogVideoX-5b |          True          |         30.061         |          OOM             |         OOM             |       OOM            |
+
+</details>
+
+<details>
+<summary> AdamW (8-bit bitsandbytes) </summary>
+
+With `train_batch_size = 1`:
+
+|       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |          True          |         16.396         |          16.447          |         27.555          |       27.156         |
+| THUDM/CogVideoX-5b |          True          |         30.061         |          52.826          |         58.570          |       49.541         |
+
+With `train_batch_size = 4`:
+
+|       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |          True          |         16.396         |          27.930          |         27.990          |       27.326         |
+| THUDM/CogVideoX-5b |          True          |         16.396         |          66.648          |         66.705          |       48.828         |
+
+</details>
+
+<details>
+<summary> AdamW + CPUOffloadOptimizer (with gradient offloading) </summary>
+
+With `train_batch_size = 1`:
+
+|       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |          True          |         16.396         |          16.396          |         26.100          |       23.832         |
+| THUDM/CogVideoX-5b |          True          |         30.061         |          39.359          |         48.307          |       37.947         |
+
+With `train_batch_size = 4`:
+
+|       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |          True          |         16.396         |          27.916          |         27.975          |       23.936         |
+| THUDM/CogVideoX-5b |          True          |         30.061         |          66.607          |         66.668          |       38.061         |
+
+</details>
+
+> [!NOTE]
 > `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
 
-- [ ] Make scripts compatible with DDP
+- [x] Make scripts compatible with DDP
 - [ ] Make scripts compatible with FSDP
 - [ ] Make scripts compatible with DeepSpeed
 - [x] Test scripts with memory-efficient optimizer from bitsandbytes
