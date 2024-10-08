@@ -113,6 +113,13 @@ Supported and verified memory optimizations for training include:
 
 ### LoRA finetuning
 
+> [!NOTE]
+> The memory requirements for image-to-video lora finetuning are similar to that of text-to-video on `THUDM/CogVideoX-5b`, so it hasn't been reported explicitly.
+>
+> Additionally, to prepare test images for I2V finetuning, you could either generate them on-the-fly by modifying the script, or extract some frames from your training data using:
+> `ffmpeg -i input.mp4 -frames:v 1 frame.png`,
+> or provide a URL to a valid and accessible image .
+
 <details>
 <summary> AdamW </summary>
 
@@ -307,6 +314,13 @@ With `train_batch_size = 4`:
 </details>
 
 ### Full finetuning
+
+> [!NOTE]
+> The memory requirements for image-to-video full finetuning are similar to that of text-to-video on `THUDM/CogVideoX-5b`, so it hasn't been reported explicitly.
+>
+> Additionally, to prepare test images for I2V finetuning, you could either generate them on-the-fly by modifying the script, or extract some frames from your training data using:
+> `ffmpeg -i input.mp4 -frames:v 1 frame.png`,
+> or provide a URL to a valid and accessible image .
 
 > [!NOTE]
 > Trying to run full finetuning without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
