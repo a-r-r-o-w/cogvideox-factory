@@ -1,10 +1,41 @@
-# CogVideoX Factory
+# CogVideoX Factory 🧪
 
-## Introduction
+Fine-tune Cog family of video models for custom video generation under 24GB of GPU memory ⚡️📼
 
-This is a repos for CogVideoX Fine-tuning.
+TODO: Add table with fun video results
 
+## Quickstart
 
+Make sure the requirements are installed: `pip install -r requirements.txt`. 
+
+Then download a dataset:
+
+```bash
+# install `huggingface_hub`
+huggingface-cli download \
+  --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset \
+  --local-dir video-dataset-disney
+```
+
+Then launch LoRA fine-tuning for text-to-video:
+
+```bash
+TODO
+```
+
+We can now use the trained model for inference:
+
+```python
+TODO
+```
+
+We can also fine-tune the 5B variant with LoRA:
+
+```python
+TODO
+```
+
+Below we provide additional sections detailing on more options we provide in this repository. They all attempt to make fine-tuning for video models as accessible as possible. 
 
 ## Dataset Preparation
 
@@ -48,9 +79,11 @@ As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disne
 huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir video-dataset-disney
 ```
 
+TODO: Add a section on creating and using precomputed embeddings.
+
 ## Training
 
-TODO
+We provide training script for both text-to-video and image-to-video generation which are compatible with the [Cog family of models](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce).
 
 Take a look at `training/*.sh`
 
@@ -68,9 +101,10 @@ Note: Untested on MPS
 </table>
 
 Supported and verified memory optimizations for training include:
-- `CPUOffloadOptimizer` from [TorchAO](https://github.com/pytorch/ao). You can read about its capabilities and limitations [here](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload). In short, it allows you to use the CPU for storing trainable parameters and gradients. This results in the optimizer step happening on the CPU, which requires a fast CPU optimizer, such as `torch.AdamW(fused=True)` or applying `torch.compile` on the optimizer step. Additionally, it is recommended to not `torch.compile` your model for training. Gradient clipping and accumulation is not supported yet either.
-- Low-bit optimizers from [bitsandbytes](https://huggingface.co/docs/bitsandbytes/optimizers). TODO: to test and make [TorchAO](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) ones work
-- TODO: DeepSpeed ZeRO
+
+- `CPUOffloadOptimizer` from [`torchao`](https://github.com/pytorch/ao). You can read about its capabilities and limitations [here](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload). In short, it allows you to use the CPU for storing trainable parameters and gradients. This results in the optimizer step happening on the CPU, which requires a fast CPU optimizer, such as `torch.optim.AdamW(fused=True)` or applying `torch.compile` on the optimizer step. Additionally, it is recommended to not `torch.compile` your model for training. Gradient clipping and accumulation is not supported yet either.
+- Low-bit optimizers from [`bitsandbytes`](https://huggingface.co/docs/bitsandbytes/optimizers). TODO: to test and make [`torchao`](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) ones work
+- DeepSpeed Zero2: Since we rely on `accelerate`, follow [this guide](https://huggingface.co/docs/accelerate/en/usage_guides/deepspeed) to configure your `accelerate` installation to enable training with DeepSpeed Zero2 optimizations. 
 
 > [!IMPORTANT]
 > The memory requirements are reported after running the `training/prepare_dataset.py`, which converts the videos and captions to latents and embeddings. During training, we directly load the latents and embeddings, and do not require the VAE or the T5 text encoder. However, if you perform validation/testing, these must be loaded and increase the amount of required memory. Not performing validation/testing saves a significant amount of memory, which can be used to focus solely on training if you're on smaller VRAM GPUs.
@@ -255,8 +289,11 @@ ValueError: Expected a cuda device, but got: cpu
 
 - [ ] Make scripts compatible with DDP
 - [ ] Make scripts compatible with FSDP
-- [ ] Make scripts compatible with DeepSpeed
+- [x] Make scripts compatible with DeepSpeed
 - [x] Test scripts with memory-efficient optimizer from bitsandbytes
 - [x] Test scripts with CPUOffloadOptimizer, etc.
 - [ ] Test scripts with torchao quantization, and low bit memory optimizers, etc.
 - [x] Make 5B lora finetuning work in under 24GB
+
+> [!IMPORTANT]
+> Since our goal is to make the scripts as memory-friendly as possible we don't guarantee multi-GPU training.

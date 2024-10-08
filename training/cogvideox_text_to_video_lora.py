@@ -25,6 +25,7 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
+import wandb
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -50,8 +51,6 @@ from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dic
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
-
-import wandb
 
 
 from args import get_args  # isort:skip
@@ -437,7 +436,7 @@ def main(args):
     )
     use_deepspeed_scheduler = (
         accelerator.state.deepspeed_plugin is not None
-        and "scheduler" not in accelerator.state.deepspeed_plugin.deepspeed_config
+        and "scheduler" in accelerator.state.deepspeed_plugin.deepspeed_config
     )
 
     optimizer = get_optimizer(
@@ -475,32 +474,14 @@ def main(args):
         random_flip=args.random_flip,
     )
 
-    def collate_fn_without_pre_encoding(data):
+    def collate_fn(data):
         prompts = [x["prompt"] for x in data[0]]
 
-        videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos)
-        videos = videos.to(accelerator.device, dtype=weight_dtype)
-        videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
-        latent_dist = vae.encode(videos).latent_dist
-        videos = latent_dist.sample() * VAE_SCALING_FACTOR
-        videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
-        videos = videos.to(memory_format=torch.contiguous_format).float()
-
-        return {
-            "videos": videos,
-            "prompts": prompts,
-        }
-
-    def collate_fn_with_pre_encoding(data):
-        prompts = [x["prompt"] for x in data[0]]
-        prompts = torch.stack(prompts).to(accelerator.device, dtype=weight_dtype)
+        if args.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=weight_dtype, non_blocking=True)
 
         videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(accelerator.device, dtype=weight_dtype)
-        videos = DiagonalGaussianDistribution(videos).sample() * VAE_SCALING_FACTOR
-        videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
-        videos = videos.to(memory_format=torch.contiguous_format).float()
+        videos = torch.stack(videos).to(dtype=weight_dtype, non_blocking=True)
 
         return {
             "videos": videos,
@@ -511,8 +492,9 @@ def main(args):
         train_dataset,
         batch_size=1,
         sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
-        collate_fn=collate_fn_with_pre_encoding if args.load_tensors else collate_fn_without_pre_encoding,
+        collate_fn=collate_fn,
         num_workers=args.dataloader_num_workers,
+        pin_memory=args.pin_memory,
     )
 
     # Scheduler and math around the number of training steps.
@@ -637,8 +619,20 @@ def main(args):
             models_to_accumulate = [transformer]
 
             with accelerator.accumulate(models_to_accumulate):
-                model_input = batch["videos"]
+                videos = batch["videos"].to(accelerator.device, non_blocking=True)
                 prompts = batch["prompts"]
+
+                # Encode videos
+                if not args.load_tensors:
+                    videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+                    latent_dist = vae.encode(videos).latent_dist
+                else:
+                    latent_dist = DiagonalGaussianDistribution(videos)
+
+                videos = latent_dist.sample() * VAE_SCALING_FACTOR
+                videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+                videos = videos.to(memory_format=torch.contiguous_format).float()
+                model_input = videos
 
                 # Encode prompts
                 if not args.load_tensors:
