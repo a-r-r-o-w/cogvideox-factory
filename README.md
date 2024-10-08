@@ -366,52 +366,30 @@ With `train_batch_size = 4`:
 
 </details>
 
+<details>
+<summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
+
+> [!NOTE]
+> Results with `gradient_checkpointing` enabled, 2x RTX 4090.
+
+With `train_batch_size = 1`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.111         |          13.111          |         20.328          |       23.867         |
+| THUDM/CogVideoX-5b |         19.762         |          19.998          |         27.697          |       38.018         |
+
+With `train_batch_size = 4`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.111         |          21.188          |         21.254          |       23.869         |
+| THUDM/CogVideoX-5b |         19.762         |          43.465          |         43.531          |       38.082         |
+
+</details>
+
 > [!NOTE]
 > `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
-
-<details>
-<summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
-
-> [!NOTE]
-> Results with `gradient_checkpointing` enabled, 2x RTX 4090.
-
-With `train_batch_size = 1`:
-
-|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
-|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |         13.111         |          13.111          |         20.328          |       23.867         |
-| THUDM/CogVideoX-5b |         19.762         |          19.998          |         27.697          |       38.018         |
-
-With `train_batch_size = 4`:
-
-|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
-|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |         13.111         |          21.188          |         21.254          |       23.869         |
-| THUDM/CogVideoX-5b |         19.762         |          43.465          |         43.531          |       38.082         |
-
-</details>
-
-<details>
-<summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
-
-> [!NOTE]
-> Results with `gradient_checkpointing` enabled, 2x RTX 4090.
-
-With `train_batch_size = 1`:
-
-|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
-|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |         13.111         |          13.111          |         20.328          |       23.867         |
-| THUDM/CogVideoX-5b |         19.762         |          19.998          |         27.697          |       38.018         |
-
-With `train_batch_size = 4`:
-
-|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
-|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |         13.111         |          21.188          |         21.254          |       23.869         |
-| THUDM/CogVideoX-5b |         19.762         |          43.465          |         43.531          |       38.082         |
-
-</details>
 
 - [x] Make scripts compatible with DDP
 - [ ] Make scripts compatible with FSDP
