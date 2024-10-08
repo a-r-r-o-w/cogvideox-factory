@@ -85,7 +85,7 @@ TODO: Add a section on creating and using precomputed embeddings.
 
 We provide training script for both text-to-video and image-to-video generation which are compatible with the [Cog family of models](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce).
 
-Take a look at `training/*.sh`
+Take a look at `*.sh`
 
 Note: Untested on MPS
 
@@ -282,10 +282,54 @@ ValueError: Expected a cuda device, but got: cpu
 
 </details>
 
+<details>
+<summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
+
+> [!NOTE]
+> Results are for `lora_rank=256` with `gradient_checkpointing` enabled, 2x RTX 4090.
+
+With `train_batch_size = 1`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.141         |          13.141          |         21.070          |       24.602         |
+| THUDM/CogVideoX-5b |         20.170         |          20.170          |         28.662          |       38.957         |
+
+With `train_batch_size = 4`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.141         |          19.854          |         20.836          |       24.709         |
+| THUDM/CogVideoX-5b |         20.170         |          40.635          |         40.699          |       39.027         |
+
+</details>
+
 ### Full finetuning
 
 > [!NOTE]
 > `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
+
+<details>
+<summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
+
+> [!NOTE]
+> Results with `gradient_checkpointing` enabled, 2x RTX 4090.
+
+With `train_batch_size = 1`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.111         |          13.111          |         20.328          |       23.867         |
+| THUDM/CogVideoX-5b |         19.762         |          19.998          |         27.697          |       38.018         |
+
+With `train_batch_size = 4`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.111         |          21.188          |         21.254          |       23.869         |
+| THUDM/CogVideoX-5b |         19.762         |          43.465          |         43.531          |       38.082         |
+
+</details>
 
 - [ ] Make scripts compatible with DDP
 - [ ] Make scripts compatible with FSDP
