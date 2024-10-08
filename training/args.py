@@ -150,7 +150,7 @@ def _get_validation_args(parser: argparse.ArgumentParser) -> None:
         "--enable_model_cpu_offloading",
         action="store_true",
         default=False,
-        help="Whether or not to enable model-wise CPU offloading when performing validation/testing to save memory."
+        help="Whether or not to enable model-wise CPU offloading when performing validation/testing to save memory.",
     )
 
 

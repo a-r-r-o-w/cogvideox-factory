@@ -106,7 +106,7 @@ import torch
 from diffusers import CogVideoXImageToVideoPipeline
 from diffusers.utils import export_to_video
 
-pipe = CogVideoXImageToVideoPipeline.from_pretrained("THUDM/CogVideoX-5b", torch_dtype=torch.bfloat16).to("cuda")
+pipe = CogVideoXImageToVideoPipeline.from_pretrained("THUDM/CogVideoX-5b-I2V", torch_dtype=torch.bfloat16).to("cuda")
 pipe.load_lora_weights("{repo_id}", weight_name="pytorch_lora_weights.safetensors", adapter_name=["cogvideox-lora"])
 
 # The LoRA adapter weights are determined by what was used for training.
@@ -476,6 +476,7 @@ def main(args):
         frame_buckets=args.frame_buckets,
         load_tensors=args.load_tensors,
         random_flip=args.random_flip,
+        image_to_video=True,
     )
 
     def collate_fn(data):
@@ -633,7 +634,9 @@ def main(args):
 
                 # Encode videos
                 if not args.load_tensors:
-                    image_noise_sigma = torch.normal(mean=-3.0, std=0.5, size=(images.size(0),), device=accelerator.device, dtype=weight_dtype)
+                    image_noise_sigma = torch.normal(
+                        mean=-3.0, std=0.5, size=(images.size(0),), device=accelerator.device, dtype=weight_dtype
+                    )
                     image_noise_sigma = torch.exp(image_noise_sigma)
                     noisy_images = images + torch.randn_like(images) * image_noise_sigma[:, None, None, None, None]
                     image_latent_dist = vae.encode(noisy_images).latent_dist
@@ -647,7 +650,7 @@ def main(args):
                 image_latents = image_latent_dist.sample() * VAE_SCALING_FACTOR
                 image_latents = image_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
                 image_latents = image_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
-                
+
                 video_latents = latent_dist.sample() * VAE_SCALING_FACTOR
                 video_latents = video_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
                 video_latents = video_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
@@ -810,7 +813,7 @@ def main(args):
 
                 validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
                 validation_images = args.validation_images.split(args.validation_prompt_separator)
-                for (validation_image, validation_prompt) in zip(validation_images, validation_prompts):
+                for validation_image, validation_prompt in zip(validation_images, validation_prompts):
                     pipeline_args = {
                         "image": load_image(validation_image),
                         "prompt": validation_prompt,
