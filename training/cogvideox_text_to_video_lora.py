@@ -82,27 +82,28 @@ def save_model_card(
             )
 
     model_description = f"""
-# CogVideoX LoRA - {repo_id}
+# CogVideoX LoRA Finetune
 
 <Gallery />
 
 ## Model description
 
-These are {repo_id} LoRA weights for {base_model}.
+This is a lora finetune of the CogVideoX model `{base_model}`.
 
-The weights were trained using the [CogVideoX Diffusers trainer](https://github.com/huggingface/diffusers/blob/main/examples/cogvideo/train_cogvideox_lora.py).
-
-Was LoRA for the text encoder enabled? No.
+The model was trained using [CogVideoX Factory](https://github.com/a-r-r-o-w/cogvideox-factory) - a repository containing memory-optimized training scripts for the CogVideoX family of models using [TorchAO](https://github.com/pytorch/ao) and [DeepSpeed](https://github.com/microsoft/DeepSpeed). The scripts were adopted from [CogVideoX Diffusers trainer](https://github.com/huggingface/diffusers/blob/main/examples/cogvideo/train_cogvideox_lora.py).
 
 ## Download model
 
-[Download the *.safetensors LoRA]({repo_id}/tree/main) in the Files & versions tab.
+[Download LoRA]({repo_id}/tree/main) in the Files & Versions tab.
 
-## Use it with the [🧨 diffusers library](https://github.com/huggingface/diffusers)
+## Usage
+
+Requires the [🧨 Diffusers library](https://github.com/huggingface/diffusers) installed.
 
 ```py
-from diffusers import CogVideoXPipeline
 import torch
+from diffusers import CogVideoXPipeline
+from diffusers import export_to_video
 
 pipe = CogVideoXPipeline.from_pretrained("THUDM/CogVideoX-5b", torch_dtype=torch.bfloat16).to("cuda")
 pipe.load_lora_weights("{repo_id}", weight_name="pytorch_lora_weights.safetensors", adapter_name=["cogvideox-lora"])
@@ -114,9 +115,10 @@ pipe.load_lora_weights("{repo_id}", weight_name="pytorch_lora_weights.safetensor
 pipe.set_adapters(["cogvideox-lora"], [32 / 64])
 
 video = pipe("{validation_prompt}", guidance_scale=6, use_dynamic_cfg=True).frames[0]
+export_to_video(video, "output.mp4", fps=8)
 ```
 
-For more details, including weighting, merging and fusing LoRAs, check the [documentation on loading LoRAs in diffusers](https://huggingface.co/docs/diffusers/main/en/using-diffusers/loading_adapters)
+For more details, including weighting, merging and fusing LoRAs, check the [documentation](https://huggingface.co/docs/diffusers/main/en/using-diffusers/loading_adapters) on loading LoRAs in diffusers.
 
 ## License
 
