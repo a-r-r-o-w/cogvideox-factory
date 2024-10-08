@@ -1,5 +1,41 @@
-# Finetuning CogVideoX
+# CogVideoX Factory 🧪
 
+Fine-tune Cog family of video models for custom video generation under 24GB of GPU memory ⚡️📼
+
+TODO: Add table with fun video results
+
+## Quickstart
+
+Make sure the requirements are installed: `pip install -r requirements.txt`. 
+
+Then download a dataset:
+
+```bash
+# install `huggingface_hub`
+huggingface-cli download \
+  --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset \
+  --local-dir video-dataset-disney
+```
+
+Then launch LoRA fine-tuning for text-to-video:
+
+```bash
+TODO
+```
+
+We can now use the trained model for inference:
+
+```python
+TODO
+```
+
+We can also fine-tune the 5B variant with LoRA:
+
+```python
+TODO
+```
+
+Below we provide additional sections detailing on more options we provide in this repository. They all attempt to make fine-tuning for video models as accessible as possible. 
 
 ## Dataset Preparation
 
@@ -43,11 +79,13 @@ As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disne
 huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir video-dataset-disney
 ```
 
+TODO: Add a section on creating and using precomputed embeddings.
+
 ## Training
 
-TODO
+We provide training script for both text-to-video and image-to-video generation which are compatible with the [Cog family of models](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce).
 
-Take a look at `training/*.sh`
+Take a look at `*.sh`
 
 Note: Untested on MPS
 
@@ -63,9 +101,10 @@ Note: Untested on MPS
 </table>
 
 Supported and verified memory optimizations for training include:
-- `CPUOffloadOptimizer` from [TorchAO](https://github.com/pytorch/ao). You can read about its capabilities and limitations [here](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload). In short, it allows you to use the CPU for storing trainable parameters and gradients. This results in the optimizer step happening on the CPU, which requires a fast CPU optimizer, such as `torch.AdamW(fused=True)` or applying `torch.compile` on the optimizer step. Additionally, it is recommended to not `torch.compile` your model for training. Gradient clipping and accumulation is not supported yet either.
-- Low-bit optimizers from [bitsandbytes](https://huggingface.co/docs/bitsandbytes/optimizers). TODO: to test and make [TorchAO](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) ones work
-- TODO: DeepSpeed ZeRO
+
+- `CPUOffloadOptimizer` from [`torchao`](https://github.com/pytorch/ao). You can read about its capabilities and limitations [here](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload). In short, it allows you to use the CPU for storing trainable parameters and gradients. This results in the optimizer step happening on the CPU, which requires a fast CPU optimizer, such as `torch.optim.AdamW(fused=True)` or applying `torch.compile` on the optimizer step. Additionally, it is recommended to not `torch.compile` your model for training. Gradient clipping and accumulation is not supported yet either.
+- Low-bit optimizers from [`bitsandbytes`](https://huggingface.co/docs/bitsandbytes/optimizers). TODO: to test and make [`torchao`](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) ones work
+- DeepSpeed Zero2: Since we rely on `accelerate`, follow [this guide](https://huggingface.co/docs/accelerate/en/usage_guides/deepspeed) to configure your `accelerate` installation to enable training with DeepSpeed Zero2 optimizations. 
 
 > [!IMPORTANT]
 > The memory requirements are reported after running the `training/prepare_dataset.py`, which converts the videos and captions to latents and embeddings. During training, we directly load the latents and embeddings, and do not require the VAE or the T5 text encoder. However, if you perform validation/testing, these must be loaded and increase the amount of required memory. Not performing validation/testing saves a significant amount of memory, which can be used to focus solely on training if you're on smaller VRAM GPUs.
@@ -243,6 +282,28 @@ ValueError: Expected a cuda device, but got: cpu
 
 </details>
 
+<details>
+<summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
+
+> [!NOTE]
+> Results are for `lora_rank=256` with `gradient_checkpointing` enabled, 2x RTX 4090.
+
+With `train_batch_size = 1`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.141         |          13.141          |         21.070          |       24.602         |
+| THUDM/CogVideoX-5b |         20.170         |          20.170          |         28.662          |       38.957         |
+
+With `train_batch_size = 4`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.141         |          19.854          |         20.836          |       24.709         |
+| THUDM/CogVideoX-5b |         20.170         |          40.635          |         40.699          |       39.027         |
+
+</details>
+
 ### Full finetuning
 
 > [!NOTE]
@@ -308,10 +369,57 @@ With `train_batch_size = 4`:
 > [!NOTE]
 > `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
 
+<details>
+<summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
+
+> [!NOTE]
+> Results with `gradient_checkpointing` enabled, 2x RTX 4090.
+
+With `train_batch_size = 1`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.111         |          13.111          |         20.328          |       23.867         |
+| THUDM/CogVideoX-5b |         19.762         |          19.998          |         27.697          |       38.018         |
+
+With `train_batch_size = 4`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.111         |          21.188          |         21.254          |       23.869         |
+| THUDM/CogVideoX-5b |         19.762         |          43.465          |         43.531          |       38.082         |
+
+</details>
+
+<details>
+<summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
+
+> [!NOTE]
+> Results with `gradient_checkpointing` enabled, 2x RTX 4090.
+
+With `train_batch_size = 1`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.111         |          13.111          |         20.328          |       23.867         |
+| THUDM/CogVideoX-5b |         19.762         |          19.998          |         27.697          |       38.018         |
+
+With `train_batch_size = 4`:
+
+|       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
+| THUDM/CogVideoX-2b |         13.111         |          21.188          |         21.254          |       23.869         |
+| THUDM/CogVideoX-5b |         19.762         |          43.465          |         43.531          |       38.082         |
+
+</details>
+
 - [x] Make scripts compatible with DDP
 - [ ] Make scripts compatible with FSDP
-- [ ] Make scripts compatible with DeepSpeed
+- [x] Make scripts compatible with DeepSpeed
 - [x] Test scripts with memory-efficient optimizer from bitsandbytes
 - [x] Test scripts with CPUOffloadOptimizer, etc.
 - [ ] Test scripts with torchao quantization, and low bit memory optimizers, etc.
 - [x] Make 5B lora finetuning work in under 24GB
+
+> [!IMPORTANT]
+> Since our goal is to make the scripts as memory-friendly as possible we don't guarantee multi-GPU training.

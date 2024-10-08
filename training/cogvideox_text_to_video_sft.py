@@ -26,7 +26,7 @@ import diffusers
 import torch
 import transformers
 import wandb
-from accelerate import Accelerator
+from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import (
     DistributedDataParallelKwargs,
@@ -271,7 +271,7 @@ def main(args):
             "bf16" in accelerator.state.deepspeed_plugin.deepspeed_config
             and accelerator.state.deepspeed_plugin.deepspeed_config["bf16"]["enabled"]
         ):
-            weight_dtype = torch.float16
+            weight_dtype = torch.bfloat16
     else:
         if accelerator.mixed_precision == "fp16":
             weight_dtype = torch.float16
@@ -367,7 +367,7 @@ def main(args):
     )
     use_deepspeed_scheduler = (
         accelerator.state.deepspeed_plugin is not None
-        and "scheduler" not in accelerator.state.deepspeed_plugin.deepspeed_config
+        and "scheduler" in accelerator.state.deepspeed_plugin.deepspeed_config
     )
 
     optimizer = get_optimizer(
@@ -562,7 +562,7 @@ def main(args):
 
                 videos = latent_dist.sample() * VAE_SCALING_FACTOR
                 videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
-                videos = videos.to(memory_format=torch.contiguous_format).float()
+                videos = videos.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
                 model_input = videos
 
                 # Encode prompts
@@ -577,7 +577,7 @@ def main(args):
                         requires_grad=False,
                     )
                 else:
-                    prompt_embeds = prompts
+                    prompt_embeds = prompts.to(dtype=weight_dtype)
 
                 # Sample noise that will be added to the latents
                 noise = torch.randn_like(model_input)
@@ -652,7 +652,7 @@ def main(args):
                 progress_bar.update(1)
                 global_step += 1
 
-                if accelerator.is_main_process:
+                if accelerator.is_main_process or accelerator.distributed_type == DistributedType.DEEPSPEED:
                     if global_step % args.checkpointing_steps == 0:
                         # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                         if args.checkpoints_total_limit is not None:
