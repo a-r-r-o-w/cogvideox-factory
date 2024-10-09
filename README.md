@@ -109,9 +109,16 @@ Supported and verified memory optimizations for training include:
 > [!IMPORTANT]
 > The memory requirements are reported after running the `training/prepare_dataset.py`, which converts the videos and captions to latents and embeddings. During training, we directly load the latents and embeddings, and do not require the VAE or the T5 text encoder. However, if you perform validation/testing, these must be loaded and increase the amount of required memory. Not performing validation/testing saves a significant amount of memory, which can be used to focus solely on training if you're on smaller VRAM GPUs.
 >
-> If you choose to run validation/testing, you can save some memory on lower VRAM GPUs by specifying `--enable_model_cpu_offloading`.
+> If you choose to run validation/testing, you can save some memory on lower VRAM GPUs by specifying `--enable_model_cpu_offload`.
 
 ### LoRA finetuning
+
+> [!NOTE]
+> The memory requirements for image-to-video lora finetuning are similar to that of text-to-video on `THUDM/CogVideoX-5b`, so it hasn't been reported explicitly.
+>
+> Additionally, to prepare test images for I2V finetuning, you could either generate them on-the-fly by modifying the script, or extract some frames from your training data using:
+> `ffmpeg -i input.mp4 -frames:v 1 frame.png`,
+> or provide a URL to a valid and accessible image.
 
 <details>
 <summary> AdamW </summary>
@@ -307,6 +314,13 @@ With `train_batch_size = 4`:
 </details>
 
 ### Full finetuning
+
+> [!NOTE]
+> The memory requirements for image-to-video full finetuning are similar to that of text-to-video on `THUDM/CogVideoX-5b`, so it hasn't been reported explicitly.
+>
+> Additionally, to prepare test images for I2V finetuning, you could either generate them on-the-fly by modifying the script, or extract some frames from your training data using:
+> `ffmpeg -i input.mp4 -frames:v 1 frame.png`,
+> or provide a URL to a valid and accessible image.
 
 > [!NOTE]
 > Trying to run full finetuning without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.

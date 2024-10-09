@@ -40,6 +40,7 @@ class VideoDataset(Dataset):
         frame_buckets: List[int] = None,
         load_tensors: bool = False,
         random_flip: Optional[float] = None,
+        image_to_video: bool = False,
     ) -> None:
         super().__init__()
 
@@ -54,6 +55,7 @@ class VideoDataset(Dataset):
         self.frame_buckets = frame_buckets or FRAME_BUCKETS
         self.load_tensors = load_tensors
         self.random_flip = random_flip
+        self.image_to_video = image_to_video
 
         self.resolutions = [
             (f, h, w) for h in self.height_buckets for w in self.width_buckets for f in self.frame_buckets
@@ -107,23 +109,24 @@ class VideoDataset(Dataset):
             return index
 
         if self.load_tensors:
-            latents, prompt_embeds = self._preprocess_video(self.video_paths[index])
+            image_latents, video_latents, prompt_embeds = self._preprocess_video(self.video_paths[index])
 
             # This is hardcoded for now.
             # The VAE's temporal compression ratio is 4.
             # The VAE's spatial compression ratio is 8.
-            latent_num_frames = latents.size(1)
+            latent_num_frames = video_latents.size(1)
             if latent_num_frames % 2 == 0:
                 num_frames = latent_num_frames * 4
             else:
                 num_frames = (latent_num_frames - 1) * 4 + 1
 
-            height = latents.size(2) * 8
-            width = latents.size(3) * 8
+            height = video_latents.size(2) * 8
+            width = video_latents.size(3) * 8
 
             return {
                 "prompt": prompt_embeds,
-                "video": latents,
+                "image": image_latents,
+                "video": video_latents,
                 "video_metadata": {
                     "num_frames": num_frames,
                     "height": height,
@@ -131,10 +134,11 @@ class VideoDataset(Dataset):
                 },
             }
         else:
-            video, _ = self._preprocess_video(self.video_paths[index])
+            image, video, _ = self._preprocess_video(self.video_paths[index])
 
             return {
                 "prompt": self.id_token + self.prompts[index],
+                "image": image,
                 "video": video,
                 "video_metadata": {
                     "num_frames": video.shape[0],
@@ -207,7 +211,9 @@ class VideoDataset(Dataset):
             frames = frames.permute(0, 3, 1, 2).contiguous()
             frames = torch.stack([self.video_transforms(frame) for frame in frames], dim=0)
 
-            return frames, None
+            image = frames[:1].clone() if self.image_to_video else None
+
+            return image, frames, None
 
     def _load_preprocessed_latents_and_embeds(self, path: Path) -> Tuple[torch.Tensor, torch.Tensor]:
         filename_without_ext = path.name.split(".")[0]
@@ -215,28 +221,34 @@ class VideoDataset(Dataset):
 
         # The current path is something like: /a/b/c/d/videos/00001.mp4
         # We need to reach: /a/b/c/d/latents/00001.pt
+        images_path = path.parent.parent.joinpath("image_latents")
         latents_path = path.parent.parent.joinpath("latents")
         embeds_path = path.parent.parent.joinpath("embeddings")
 
-        if not latents_path.exists() or not embeds_path.exists():
+        if not latents_path.exists() or not embeds_path.exists() or (self.image_to_video and not images_path.exists()):
             raise ValueError(
-                f"When setting the load_tensors parameter to `True`, it is expected that the `{self.data_root=}` contains two folders named `latents` and `embeddings`. However, these folders were not found. Please make sure to have prepared your data correctly using `prepare_data.py`."
+                f"When setting the load_tensors parameter to `True`, it is expected that the `{self.data_root=}` contains two folders named `latents` and `embeddings`. However, these folders were not found. Please make sure to have prepared your data correctly using `prepare_data.py`. Additionally, if you're training image-to-video, it is expected that an `image_latents` folder is also present."
             )
 
+        if self.image_to_video:
+            image_filepath = images_path.joinpath(pt_filename)
         latent_filepath = latents_path.joinpath(pt_filename)
         embeds_filepath = embeds_path.joinpath(pt_filename)
 
         if not latent_filepath.is_file() or not embeds_filepath.is_file():
+            if self.image_to_video:
+                image_filepath = image_filepath.as_posix()
             latent_filepath = latent_filepath.as_posix()
             embeds_filepath = embeds_filepath.as_posix()
             raise ValueError(
                 f"The file {latent_filepath=} or {embeds_filepath=} could not be found. Please ensure that you've correctly executed `prepare_dataset.py`."
             )
 
+        images = torch.load(image_filepath, map_location="cpu", weights_only=True) if self.image_to_video else None
         latents = torch.load(latent_filepath, map_location="cpu", weights_only=True)
         embeds = torch.load(embeds_filepath, map_location="cpu", weights_only=True)
 
-        return latents, embeds
+        return images, latents, embeds
 
 
 class VideoDatasetWithResizing(VideoDataset):
@@ -261,9 +273,11 @@ class VideoDatasetWithResizing(VideoDataset):
 
             nearest_res = self._find_nearest_resolution(frames.shape[2], frames.shape[3])
             frames_resized = torch.stack([resize(frame, nearest_res) for frame in frames], dim=0)
-
             frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
-            return frames, None
+
+            image = frames[:1].clone() if self.image_to_video else None
+
+            return image, frames, None
 
     def _find_nearest_resolution(self, height, width):
         nearest_res = min(self.resolutions, key=lambda x: abs(x[1] - height) + abs(x[2] - width))

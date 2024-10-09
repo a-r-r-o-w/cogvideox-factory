@@ -80,7 +80,42 @@ def save_model_card(
                 }
             )
 
-    model_description = """TODO"""
+    model_description = f"""
+# CogVideoX Full Finetune
+
+<Gallery />
+
+## Model description
+
+This is a full finetune of the CogVideoX model `{base_model}`.
+
+The model was trained using [CogVideoX Factory](https://github.com/a-r-r-o-w/cogvideox-factory) - a repository containing memory-optimized training scripts for the CogVideoX family of models using [TorchAO](https://github.com/pytorch/ao) and [DeepSpeed](https://github.com/microsoft/DeepSpeed). The scripts were adopted from [CogVideoX Diffusers trainer](https://github.com/huggingface/diffusers/blob/main/examples/cogvideo/train_cogvideox_lora.py).
+
+## Download model
+
+[Download LoRA]({repo_id}/tree/main) in the Files & Versions tab.
+
+## Usage
+
+Requires the [🧨 Diffusers library](https://github.com/huggingface/diffusers) installed.
+
+```py
+import torch
+from diffusers import CogVideoXPipeline
+from diffusers.utils import export_to_video
+
+pipe = CogVideoXPipeline.from_pretrained("{repo_id}", torch_dtype=torch.bfloat16).to("cuda")
+
+video = pipe("{validation_prompt}", guidance_scale=6, use_dynamic_cfg=True).frames[0]
+export_to_video(video, "output.mp4", fps=8)
+```
+
+For more details, checkout the [documentation](https://huggingface.co/docs/diffusers/main/en/api/pipelines/cogvideox) for CogVideoX.
+
+## License
+
+Please adhere to the licensing terms as described [here](https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE) and [here](https://huggingface.co/THUDM/CogVideoX-2b/blob/main/LICENSE).
+"""
     model_card = load_or_create_model_card(
         repo_id_or_path=repo_id,
         from_training=True,
