@@ -144,7 +144,7 @@ def _get_validation_args(parser: argparse.ArgumentParser) -> None:
         "--enable_model_cpu_offloading",
         action="store_true",
         default=False,
-        help="Whether or not to enable model-wise CPU offloading when performing validation/testing to save memory."
+        help="Whether or not to enable model-wise CPU offloading when performing validation/testing to save memory.",
     )
 
 
@@ -185,6 +185,12 @@ def _get_training_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=720,
         help="All input videos are resized to this width.",
+    )
+    parser.add_argument(
+        "--video_reshape_mode",
+        type=str,
+        default=None,
+        help="All input videos are reshaped to this mode. Choose between ['center', 'random', 'none']",
     )
     parser.add_argument("--fps", type=int, default=8, help="All input videos will be used at this FPS.")
     parser.add_argument(
