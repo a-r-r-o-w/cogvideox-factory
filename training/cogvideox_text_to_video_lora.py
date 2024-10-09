@@ -478,7 +478,9 @@ def main(args):
     if args.video_reshape_mode is None:
         train_dataset = VideoDatasetWithResizing(**dataset_init_kwargs)
     else:
-        train_dataset = VideoDatasetWithResizeAndRectangleCrop(video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs)
+        train_dataset = VideoDatasetWithResizeAndRectangleCrop(
+            video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
+        )
 
     def collate_fn(data):
         prompts = [x["prompt"] for x in data[0]]

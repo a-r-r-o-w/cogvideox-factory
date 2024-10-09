@@ -2,7 +2,31 @@
 
 Fine-tune Cog family of video models for custom video generation under 24GB of GPU memory ⚡️📼
 
-TODO: Add table with fun video results
+<table align="center">
+<tr>
+  <td align="center" colspan="2"><b>CogVideoX LoRA Finetuning</b></td>
+</tr>
+<tr>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-2b">THUDM/CogVideoX-2b</a></td>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-5b">THUDM/CogVideoX-5b</a></td>
+</tr>
+<tr>
+  <td align="center"><img src="assets/lora_2b.png" /></td>
+  <td align="center"><img src="assets/lora_5b.png" /></td>
+</tr>
+
+<tr>
+  <td align="center" colspan="2"><b>CogVideoX Full Finetuning</b></td>
+</tr>
+<tr>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-2b">THUDM/CogVideoX-2b</a></td>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-5b">THUDM/CogVideoX-5b</a></td>
+</tr>
+<tr>
+  <td align="center"><img src="assets/sft_2b.png" /></td>
+  <td align="center"><img src="assets/sft_5b.png" /></td>
+</tr>
+</table>
 
 ## Quickstart
 
