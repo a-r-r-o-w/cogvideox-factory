@@ -12,4 +12,6 @@ torch
 torchvision
 torchao
 sentencepiece
+imageio-ffmpeg
+imageio
 numpy==2.1.1
