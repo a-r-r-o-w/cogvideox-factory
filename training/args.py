@@ -147,7 +147,7 @@ def _get_validation_args(parser: argparse.ArgumentParser) -> None:
         help="Whether or not to use the default cosine dynamic guidance schedule when sampling validation videos.",
     )
     parser.add_argument(
-        "--enable_model_cpu_offloading",
+        "--enable_model_cpu_offload",
         action="store_true",
         default=False,
         help="Whether or not to enable model-wise CPU offloading when performing validation/testing to save memory.",

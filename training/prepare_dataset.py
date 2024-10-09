@@ -301,11 +301,11 @@ def save_videos(
         logger.debug(f"Saving video to `{filename}`")
         export_to_video(video, filename.as_posix(), fps=target_fps)
 
-    with open(output_dir.joinpath("videos.txt").as_posix(), "w", encoding="utf-8") as file:
+    with open(output_dir.joinpath("videos.txt").as_posix(), "a", encoding="utf-8") as file:
         for video_path in video_paths:
             file.write(f"videos/{video_path.name}\n")
 
-    with open(output_dir.joinpath("prompts.txt").as_posix(), "w", encoding="utf-8") as file:
+    with open(output_dir.joinpath("prompts.txt").as_posix(), "a", encoding="utf-8") as file:
         for prompt in prompts:
             file.write(f"{prompt}\n")
 
@@ -351,11 +351,11 @@ def save_latents_and_embeddings(
         torch.save(latent, latent_filename)
         torch.save(embed, embed_filename)
 
-    with open(output_dir.joinpath("videos.txt").as_posix(), "w", encoding="utf-8") as file:
+    with open(output_dir.joinpath("videos.txt").as_posix(), "a", encoding="utf-8") as file:
         for video_path in video_paths:
             file.write(f"videos/{video_path.name}\n")
 
-    with open(output_dir.joinpath("prompts.txt").as_posix(), "w", encoding="utf-8") as file:
+    with open(output_dir.joinpath("prompts.txt").as_posix(), "a", encoding="utf-8") as file:
         for prompt in prompts:
             file.write(f"{prompt}\n")
 
