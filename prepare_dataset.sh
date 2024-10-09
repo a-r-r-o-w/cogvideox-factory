@@ -17,7 +17,8 @@ TARGET_FPS=8
 BATCH_SIZE=1
 DTYPE=fp32
 
-# To create a folder-style dataset structure without pre-encoding videos and captions'
+# To create a folder-style dataset structure without pre-encoding videos and captions
+# For Image-to-Video finetuning, make sure to pass `--save_image_latents`
 CMD_WITHOUT_PRE_ENCODING="\
   torchrun --nproc_per_node=$NUM_GPUS \
     training/prepare_dataset.py \

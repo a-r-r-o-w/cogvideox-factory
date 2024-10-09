@@ -55,6 +55,11 @@ def get_args() -> Dict[str, Any]:
         help="If using a CSV file via the `--dataset_file` argument, this should be the name of the column containing the video paths. If using the folder structure format for data loading, this should be the name of the file containing line-separated video paths (the file should be located in `--data_root`).",
     )
     parser.add_argument(
+        "--save_image_latents",
+        action="store_true",
+        help="Whether or not to encode and store image latents, which are required for image-to-video finetuning. The image latents are the first frame of input videos encoded with the VAE.",
+    )
+    parser.add_argument(
         "--output_dir",
         type=str,
         required=True,
@@ -296,50 +301,61 @@ def save_videos(
         logger.debug(f"Saving video to `{filename}`")
         export_to_video(video, filename.as_posix(), fps=target_fps)
 
-    with open(output_dir.joinpath("videos.txt").as_posix(), "w", encoding="utf-8") as file:
+    with open(output_dir.joinpath("videos.txt").as_posix(), "a", encoding="utf-8") as file:
         for video_path in video_paths:
             file.write(f"videos/{video_path.name}\n")
 
-    with open(output_dir.joinpath("prompts.txt").as_posix(), "w", encoding="utf-8") as file:
+    with open(output_dir.joinpath("prompts.txt").as_posix(), "a", encoding="utf-8") as file:
         for prompt in prompts:
             file.write(f"{prompt}\n")
 
 
 def save_latents_and_embeddings(
+    image_latents: torch.Tensor,
     latents: torch.Tensor,
     prompt_embeds: torch.Tensor,
     video_paths: List[pathlib.Path],
     prompts: List[str],
     output_dir: pathlib.Path,
+    save_image_latents: bool = False,
 ) -> None:
     assert latents.size(0) == prompt_embeds.size(0)
     assert latents.size(0) == len(video_paths)
     assert prompt_embeds.size(0) == len(prompts)
+    if save_image_latents:
+        assert image_latents.size(0) == latents.size(0)
+    else:
+        image_latents = [None] * latents.size(0)
 
+    image_latents_dir = output_dir.joinpath("image_latents")
     latents_dir = output_dir.joinpath("latents")
     embeds_dir = output_dir.joinpath("embeddings")
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    image_latents_dir.mkdir(parents=True, exist_ok=True)
     latents_dir.mkdir(parents=True, exist_ok=True)
     embeds_dir.mkdir(parents=True, exist_ok=True)
 
-    for latent, embed, video_path in zip(latents, prompt_embeds, video_paths):
+    for image_latent, latent, embed, video_path in zip(image_latents, latents, prompt_embeds, video_paths):
+        image_latent = image_latent.clone()
         latent = latent.clone()
         embed = embed.clone()
 
         filename_without_ext = video_path.stem
 
+        image_latent_filename = image_latents_dir.joinpath(f"{filename_without_ext}.pt")
         latent_filename = latents_dir.joinpath(f"{filename_without_ext}.pt")
         embed_filename = embeds_dir.joinpath(f"{filename_without_ext}.pt")
 
+        torch.save(image_latent, image_latent_filename)
         torch.save(latent, latent_filename)
         torch.save(embed, embed_filename)
 
-    with open(output_dir.joinpath("videos.txt").as_posix(), "w", encoding="utf-8") as file:
+    with open(output_dir.joinpath("videos.txt").as_posix(), "a", encoding="utf-8") as file:
         for video_path in video_paths:
             file.write(f"videos/{video_path.name}\n")
 
-    with open(output_dir.joinpath("prompts.txt").as_posix(), "w", encoding="utf-8") as file:
+    with open(output_dir.joinpath("prompts.txt").as_posix(), "a", encoding="utf-8") as file:
         for prompt in prompts:
             file.write(f"{prompt}\n")
 
@@ -470,6 +486,7 @@ def main():
             vae.enable_tiling()
 
         encoded_videos_list = []
+        encoded_images_list = []
 
         if rank == 0:
             iterator = tqdm(range(0, len(video_paths_usable), args.batch_size), desc="Encoding videos")
@@ -483,17 +500,33 @@ def main():
             batch_videos = batch_videos.to(device)
             batch_videos = batch_videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
 
+            if args.save_image_latents:
+                batch_images = batch_videos[:, :, :1].clone()
+
             if args.use_slicing:
                 encoded_slices = [vae._encode(video_slice) for video_slice in batch_videos.split(1)]
                 encoded_video = torch.cat(encoded_slices)
+                encoded_videos_list.append(encoded_video.to("cpu"))
+
+                if args.save_image_latents:
+                    encoded_slices = [vae._encode(image_slice) for image_slice in batch_images.split(1)]
+                    encoded_image = torch.cat(encoded_slices)
+                    encoded_images_list.append(encoded_image.to("cpu"))
             else:
                 encoded_video = vae._encode(batch_videos)
+                encoded_videos_list.append(encoded_video.to("cpu"))
 
-            encoded_videos_list.append(encoded_video.to("cpu"))
+                if args.save_image_latents:
+                    encoded_image = vae._encode(batch_images)
+                    encoded_images_list.append(encoded_image.to("cpu"))
 
         encoded_videos = None
         if len(encoded_videos_list) > 0:
             encoded_videos = torch.cat(encoded_videos_list)
+
+        encoded_images = None
+        if len(encoded_images_list) > 0:
+            encoded_images = torch.cat(encoded_images_list)
 
         del vae
         gc.collect()
@@ -507,7 +540,13 @@ def main():
         if prompt_embeds is not None:
             assert encoded_videos is not None
             save_latents_and_embeddings(
-                encoded_videos, prompt_embeds, video_paths_usable, prompts_usable, pathlib.Path(args.output_dir)
+                encoded_images,
+                encoded_videos,
+                prompt_embeds,
+                video_paths_usable,
+                prompts_usable,
+                pathlib.Path(args.output_dir),
+                args.save_image_latents,
             )
 
     # Finalize distributed processing

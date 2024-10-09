@@ -111,6 +111,12 @@ def _get_validation_args(parser: argparse.ArgumentParser) -> None:
         help="One or more prompt(s) that is used during validation to verify that the model is learning. Multiple validation prompts should be separated by the '--validation_prompt_seperator' string.",
     )
     parser.add_argument(
+        "--validation_images",
+        type=str,
+        default=None,
+        help="One or more image path(s)/URLs that is used during validation to verify that the model is learning. Multiple validation paths should be separated by the '--validation_prompt_seperator' string. These should correspond to the order of the validation prompts.",
+    )
+    parser.add_argument(
         "--validation_prompt_separator",
         type=str,
         default=":::",
@@ -141,10 +147,10 @@ def _get_validation_args(parser: argparse.ArgumentParser) -> None:
         help="Whether or not to use the default cosine dynamic guidance schedule when sampling validation videos.",
     )
     parser.add_argument(
-        "--enable_model_cpu_offloading",
+        "--enable_model_cpu_offload",
         action="store_true",
         default=False,
-        help="Whether or not to enable model-wise CPU offloading when performing validation/testing to save memory."
+        help="Whether or not to enable model-wise CPU offloading when performing validation/testing to save memory.",
     )
 
 
@@ -304,6 +310,12 @@ def _get_training_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=False,
         help="Whether or not to use VAE tiling for saving memory.",
+    )
+    parser.add_argument(
+        "--noised_image_dropout",
+        type=float,
+        default=0.05,
+        help="Image condition dropout probability when finetuning image-to-video.",
     )
 
 
