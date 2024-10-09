@@ -104,7 +104,7 @@ Requires the [🧨 Diffusers library](https://github.com/huggingface/diffusers) 
 ```py
 import torch
 from diffusers import CogVideoXImageToVideoPipeline
-from diffusers.utils import export_to_video
+from diffusers.utils import export_to_video, load_image
 
 pipe = CogVideoXImageToVideoPipeline.from_pretrained("THUDM/CogVideoX-5b-I2V", torch_dtype=torch.bfloat16).to("cuda")
 pipe.load_lora_weights("{repo_id}", weight_name="pytorch_lora_weights.safetensors", adapter_name=["cogvideox-lora"])
@@ -115,7 +115,8 @@ pipe.load_lora_weights("{repo_id}", weight_name="pytorch_lora_weights.safetensor
 # of the LoRA upto a tolerance, beyond which one might notice no effect at all or overflows.
 pipe.set_adapters(["cogvideox-lora"], [32 / 64])
 
-video = pipe("{validation_prompt}", guidance_scale=6, use_dynamic_cfg=True).frames[0]
+image = load_image("/path/to/image.png")
+video = pipe(image=image, prompt="{validation_prompt}", guidance_scale=6, use_dynamic_cfg=True).frames[0]
 export_to_video(video, "output.mp4", fps=8)
 ```
 
@@ -123,7 +124,7 @@ For more details, including weighting, merging and fusing LoRAs, check the [docu
 
 ## License
 
-Please adhere to the licensing terms as described [here](https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE) and [here](https://huggingface.co/THUDM/CogVideoX-2b/blob/main/LICENSE).
+Please adhere to the licensing terms as described [here](https://huggingface.co/THUDM/CogVideoX-5b-I2V/blob/main/LICENSE).
 """
     model_card = load_or_create_model_card(
         repo_id_or_path=repo_id,
