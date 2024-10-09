@@ -57,7 +57,7 @@ def get_args() -> Dict[str, Any]:
     parser.add_argument(
         "--save_image_latents",
         action="store_true",
-        help="Whether or not to encode and store image latents, which are required for image-to-video finetuning.",
+        help="Whether or not to encode and store image latents, which are required for image-to-video finetuning. The image latents are the first frame of input videos encoded with the VAE.",
     )
     parser.add_argument(
         "--output_dir",
