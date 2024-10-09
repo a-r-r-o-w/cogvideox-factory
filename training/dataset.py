@@ -339,7 +339,10 @@ class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
             nearest_res = self._find_nearest_resolution(frames.shape[2], frames.shape[3])
             frames_resized = self._resize_for_rectangle_crop(frames, nearest_res)
             frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
-            return frames, None
+
+            image = frames[:1].clone() if self.image_to_video else None
+
+            return image, frames, None
 
     def _find_nearest_resolution(self, height, width):
         nearest_res = min(self.resolutions, key=lambda x: abs(x[1] - height) + abs(x[2] - width))
