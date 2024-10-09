@@ -11,3 +11,5 @@ pandas
 torch
 torchvision
 torchao
+sentencepiece
+numpy==2.1.1

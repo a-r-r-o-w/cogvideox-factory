@@ -2,11 +2,14 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import torch
+import torchvision.transforms as TT
 from accelerate.logging import get_logger
 from torch.utils.data import Dataset, Sampler
 from torchvision import transforms
+from torchvision.transforms import InterpolationMode
 from torchvision.transforms.functional import resize
 
 
@@ -259,6 +262,68 @@ class VideoDatasetWithResizing(VideoDataset):
             nearest_res = self._find_nearest_resolution(frames.shape[2], frames.shape[3])
             frames_resized = torch.stack([resize(frame, nearest_res) for frame in frames], dim=0)
 
+            frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
+            return frames, None
+
+    def _find_nearest_resolution(self, height, width):
+        nearest_res = min(self.resolutions, key=lambda x: abs(x[1] - height) + abs(x[2] - width))
+        return nearest_res[1], nearest_res[2]
+
+
+class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
+    def __init__(self, video_reshape_mode: str = "center", *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.video_reshape_mode = video_reshape_mode
+
+    def _resize_for_rectangle_crop(self, arr, image_size):
+        reshape_mode = self.video_reshape_mode
+        if arr.shape[3] / arr.shape[2] > image_size[1] / image_size[0]:
+            arr = resize(
+                arr,
+                size=[image_size[0], int(arr.shape[3] * image_size[0] / arr.shape[2])],
+                interpolation=InterpolationMode.BICUBIC,
+            )
+        else:
+            arr = resize(
+                arr,
+                size=[int(arr.shape[2] * image_size[1] / arr.shape[3]), image_size[1]],
+                interpolation=InterpolationMode.BICUBIC,
+            )
+
+        h, w = arr.shape[2], arr.shape[3]
+        arr = arr.squeeze(0)
+
+        delta_h = h - image_size[0]
+        delta_w = w - image_size[1]
+
+        if reshape_mode == "random" or reshape_mode == "none":
+            top = np.random.randint(0, delta_h + 1)
+            left = np.random.randint(0, delta_w + 1)
+        elif reshape_mode == "center":
+            top, left = delta_h // 2, delta_w // 2
+        else:
+            raise NotImplementedError
+        arr = TT.functional.crop(arr, top=top, left=left, height=image_size[0], width=image_size[1])
+        return arr
+
+    def _preprocess_video(self, path: Path) -> torch.Tensor:
+        if self.load_tensors:
+            return self._load_preprocessed_latents_and_embeds(path)
+        else:
+            video_reader = decord.VideoReader(uri=path.as_posix())
+            video_num_frames = len(video_reader)
+            nearest_frame_bucket = min(
+                self.frame_buckets, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
+            )
+
+            frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
+
+            frames = video_reader.get_batch(frame_indices)
+            frames = frames[:nearest_frame_bucket].float()
+            frames = frames.permute(0, 3, 1, 2).contiguous()
+
+            nearest_res = self._find_nearest_resolution(frames.shape[2], frames.shape[3])
+            frames_resized = self._resize_for_rectangle_crop(frames, nearest_res)
             frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
             return frames, None
 
