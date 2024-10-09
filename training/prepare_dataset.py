@@ -7,12 +7,16 @@ import pathlib
 import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.distributed as dist
+import torchvision.transforms as TT
 from diffusers import AutoencoderKLCogVideoX
 from diffusers.utils import export_to_video, get_logger
 from torchvision import transforms
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.functional import resize
 from tqdm import tqdm
 from transformers import T5EncoderModel, T5Tokenizer
 
@@ -153,13 +157,51 @@ def load_dataset_from_csv(
     return prompts, video_paths
 
 
+def resize_for_rectangle_crop(arr, height, width, reshape_mode):
+    image_size = height, width
+    if arr.shape[3] / arr.shape[2] > image_size[1] / image_size[0]:
+        arr = resize(
+            arr,
+            size=[image_size[0], int(arr.shape[3] * image_size[0] / arr.shape[2])],
+            interpolation=InterpolationMode.BICUBIC,
+        )
+    else:
+        arr = resize(
+            arr,
+            size=[int(arr.shape[2] * image_size[1] / arr.shape[3]), image_size[1]],
+            interpolation=InterpolationMode.BICUBIC,
+        )
+
+    h, w = arr.shape[2], arr.shape[3]
+    arr = arr.squeeze(0)
+
+    delta_h = h - image_size[0]
+    delta_w = w - image_size[1]
+
+    if reshape_mode == "random" or reshape_mode == "none":
+        top = np.random.randint(0, delta_h + 1)
+        left = np.random.randint(0, delta_w + 1)
+    elif reshape_mode == "center":
+        top, left = delta_h // 2, delta_w // 2
+    else:
+        raise NotImplementedError
+    arr = TT.functional.crop(arr, top=top, left=left, height=image_size[0], width=image_size[1])
+    return arr
+
+
 def load_and_preprocess_video(
-    path: pathlib.Path, height: int, width: int, max_num_frames: int, video_transforms, num_threads: int = 0
+    path: pathlib.Path,
+    height: int,
+    width: int,
+    max_num_frames: int,
+    video_transforms,
+    num_threads: int = 0,
+    video_reshape_mode: str = "center",
 ) -> Optional[torch.Tensor]:
     frames = None
 
     try:
-        video_reader = decord.VideoReader(uri=path.as_posix(), height=height, width=width, num_threads=num_threads)
+        video_reader = decord.VideoReader(uri=path.as_posix(), num_threads=num_threads)
         video_num_frames = len(video_reader)
 
         if video_num_frames < max_num_frames:
@@ -172,6 +214,7 @@ def load_and_preprocess_video(
         frames: torch.Tensor = video_reader.get_batch(indices)
         frames = frames[:max_num_frames].float()
         frames = frames.permute(0, 3, 1, 2).contiguous()
+        frames = resize_for_rectangle_crop(frames, height, width, video_reshape_mode)
         frames = torch.stack([video_transforms(frame) for frame in frames], dim=0)
     except Exception as e:
         logger.error(f"Error: {e}. Skipping video located at `{path.as_posix()}`")
