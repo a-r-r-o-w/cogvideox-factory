@@ -4,7 +4,7 @@ Fine-tune Cog family of video models for custom video generation under 24GB of G
 
 <table align="center">
 <tr>
-  <td align="center"><video src="./assets/CogVideoX-LoRA.webm">Your browser does not support the video tag.</video></td>
+  <td align="center"><video src="https://github.com/user-attachments/assets/aad07161-87cb-4784-9e6b-16d06581e3e5">Your browser does not support the video tag.</video></td>
 </tr>
 </table>
 
