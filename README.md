@@ -83,7 +83,7 @@ Overall, this is how your dataset would look like if you ran the `tree` command 
     ├── ...
 ```
 
-When using this format, the `--caption_column` must be `prompt.txt` and `--video_column` must be `videos.txt`. If you have your data stored in a CSV file instead, you can also specify `--dataset_file` as the path to CSV, and the `--caption_column` and `--video_column` as the actual column names in the CSV file.
+When using this format, the `--caption_column` must be `prompt.txt` and `--video_column` must be `videos.txt`. If you have your data stored in a CSV file instead, you can also specify `--dataset_file` as the path to CSV, and the `--caption_column` and `--video_column` as the actual column names in the CSV file. The [test_dataset](./tests/test_dataset.py) file contains some easy-to-understand examples for both formats.
 
 As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disney-VideoGeneration-Dataset) Disney dataset for finetuning. To download, one can use the 🤗 Hugging Face CLI.
 
