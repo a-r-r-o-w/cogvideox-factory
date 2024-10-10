@@ -25,7 +25,8 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
-from accelerate import Accelerator
+import wandb
+from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import (
     DistributedDataParallelKwargs,
@@ -50,11 +51,9 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
 
-import wandb
-
 
 from args import get_args  # isort:skip
-from dataset import BucketSampler, VideoDatasetWithResizing  # isort:skip
+from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
 from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings, print_memory, reset_memory  # isort:skip
 
@@ -81,7 +80,42 @@ def save_model_card(
                 }
             )
 
-    model_description = """TODO"""
+    model_description = f"""
+# CogVideoX Full Finetune
+
+<Gallery />
+
+## Model description
+
+This is a full finetune of the CogVideoX model `{base_model}`.
+
+The model was trained using [CogVideoX Factory](https://github.com/a-r-r-o-w/cogvideox-factory) - a repository containing memory-optimized training scripts for the CogVideoX family of models using [TorchAO](https://github.com/pytorch/ao) and [DeepSpeed](https://github.com/microsoft/DeepSpeed). The scripts were adopted from [CogVideoX Diffusers trainer](https://github.com/huggingface/diffusers/blob/main/examples/cogvideo/train_cogvideox_lora.py).
+
+## Download model
+
+[Download LoRA]({repo_id}/tree/main) in the Files & Versions tab.
+
+## Usage
+
+Requires the [🧨 Diffusers library](https://github.com/huggingface/diffusers) installed.
+
+```py
+import torch
+from diffusers import CogVideoXPipeline
+from diffusers.utils import export_to_video
+
+pipe = CogVideoXPipeline.from_pretrained("{repo_id}", torch_dtype=torch.bfloat16).to("cuda")
+
+video = pipe("{validation_prompt}", guidance_scale=6, use_dynamic_cfg=True).frames[0]
+export_to_video(video, "output.mp4", fps=8)
+```
+
+For more details, checkout the [documentation](https://huggingface.co/docs/diffusers/main/en/api/pipelines/cogvideox) for CogVideoX.
+
+## License
+
+Please adhere to the licensing terms as described [here](https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE) and [here](https://huggingface.co/THUDM/CogVideoX-2b/blob/main/LICENSE).
+"""
     model_card = load_or_create_model_card(
         repo_id_or_path=repo_id,
         from_training=True,
@@ -272,7 +306,7 @@ def main(args):
             "bf16" in accelerator.state.deepspeed_plugin.deepspeed_config
             and accelerator.state.deepspeed_plugin.deepspeed_config["bf16"]["enabled"]
         ):
-            weight_dtype = torch.float16
+            weight_dtype = torch.bfloat16
     else:
         if accelerator.mixed_precision == "fp16":
             weight_dtype = torch.float16
@@ -368,7 +402,7 @@ def main(args):
     )
     use_deepspeed_scheduler = (
         accelerator.state.deepspeed_plugin is not None
-        and "scheduler" not in accelerator.state.deepspeed_plugin.deepspeed_config
+        and "scheduler" in accelerator.state.deepspeed_plugin.deepspeed_config
     )
 
     optimizer = get_optimizer(
@@ -392,46 +426,34 @@ def main(args):
     )
 
     # Dataset and DataLoader
-    train_dataset = VideoDatasetWithResizing(
-        data_root=args.data_root,
-        dataset_file=args.dataset_file,
-        caption_column=args.caption_column,
-        video_column=args.video_column,
-        max_num_frames=args.max_num_frames,
-        id_token=args.id_token,
-        height_buckets=args.height_buckets,
-        width_buckets=args.width_buckets,
-        frame_buckets=args.frame_buckets,
-        load_tensors=args.load_tensors,
-        random_flip=args.random_flip,
-    )
+    dataset_init_kwargs = {
+        "data_root": args.data_root,
+        "dataset_file": args.dataset_file,
+        "caption_column": args.caption_column,
+        "video_column": args.video_column,
+        "max_num_frames": args.max_num_frames,
+        "id_token": args.id_token,
+        "height_buckets": args.height_buckets,
+        "width_buckets": args.width_buckets,
+        "frame_buckets": args.frame_buckets,
+        "load_tensors": args.load_tensors,
+        "random_flip": args.random_flip,
+    }
+    if args.video_reshape_mode is None:
+        train_dataset = VideoDatasetWithResizing(**dataset_init_kwargs)
+    else:
+        train_dataset = VideoDatasetWithResizeAndRectangleCrop(
+            video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
+        )
 
-    def collate_fn_without_pre_encoding(data):
+    def collate_fn(data):
         prompts = [x["prompt"] for x in data[0]]
 
-        videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos)
-        videos = videos.to(accelerator.device, dtype=weight_dtype)
-        videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
-        latent_dist = vae.encode(videos).latent_dist
-        videos = latent_dist.sample() * VAE_SCALING_FACTOR
-        videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
-        videos = videos.to(memory_format=torch.contiguous_format).float()
-
-        return {
-            "videos": videos,
-            "prompts": prompts,
-        }
-
-    def collate_fn_with_pre_encoding(data):
-        prompts = [x["prompt"] for x in data[0]]
-        prompts = torch.stack(prompts).to(accelerator.device, dtype=weight_dtype)
+        if args.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=weight_dtype, non_blocking=True)
 
         videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(accelerator.device, dtype=weight_dtype)
-        videos = DiagonalGaussianDistribution(videos).sample() * VAE_SCALING_FACTOR
-        videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
-        videos = videos.to(memory_format=torch.contiguous_format).float()
+        videos = torch.stack(videos).to(dtype=weight_dtype, non_blocking=True)
 
         return {
             "videos": videos,
@@ -442,8 +464,9 @@ def main(args):
         train_dataset,
         batch_size=1,
         sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
-        collate_fn=collate_fn_with_pre_encoding if args.load_tensors else collate_fn_without_pre_encoding,
+        collate_fn=collate_fn,
         num_workers=args.dataloader_num_workers,
+        pin_memory=args.pin_memory,
     )
 
     # Scheduler and math around the number of training steps.
@@ -568,8 +591,20 @@ def main(args):
             models_to_accumulate = [transformer]
 
             with accelerator.accumulate(models_to_accumulate):
-                model_input = batch["videos"]
+                videos = batch["videos"].to(accelerator.device, non_blocking=True)
                 prompts = batch["prompts"]
+
+                # Encode videos
+                if not args.load_tensors:
+                    videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+                    latent_dist = vae.encode(videos).latent_dist
+                else:
+                    latent_dist = DiagonalGaussianDistribution(videos)
+
+                videos = latent_dist.sample() * VAE_SCALING_FACTOR
+                videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+                videos = videos.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
+                model_input = videos
 
                 # Encode prompts
                 if not args.load_tensors:
@@ -583,7 +618,7 @@ def main(args):
                         requires_grad=False,
                     )
                 else:
-                    prompt_embeds = prompts
+                    prompt_embeds = prompts.to(dtype=weight_dtype)
 
                 # Sample noise that will be added to the latents
                 noise = torch.randn_like(model_input)
@@ -658,7 +693,7 @@ def main(args):
                 progress_bar.update(1)
                 global_step += 1
 
-                if accelerator.is_main_process:
+                if accelerator.is_main_process or accelerator.distributed_type == DistributedType.DEEPSPEED:
                     if global_step % args.checkpointing_steps == 0:
                         # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                         if args.checkpoints_total_limit is not None:
@@ -716,6 +751,8 @@ def main(args):
                     pipe.vae.enable_slicing()
                 if args.enable_tiling:
                     pipe.vae.enable_tiling()
+                if args.enable_model_cpu_offload:
+                    pipe.enable_model_cpu_offload()
 
                 validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
                 for validation_prompt in validation_prompts:
@@ -725,6 +762,7 @@ def main(args):
                         "use_dynamic_cfg": args.use_dynamic_cfg,
                         "height": args.height,
                         "width": args.width,
+                        "max_sequence_length": model_config.max_text_seq_length,
                     }
 
                     log_validation(
@@ -791,6 +829,8 @@ def main(args):
             pipe.vae.enable_slicing()
         if args.enable_tiling:
             pipe.vae.enable_tiling()
+        if args.enable_model_cpu_offload:
+            pipe.enable_model_cpu_offload()
 
         # Run inference
         validation_outputs = []

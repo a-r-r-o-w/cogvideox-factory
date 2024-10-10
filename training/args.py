@@ -96,6 +96,11 @@ def _get_dataset_args(parser: argparse.ArgumentParser) -> None:
         default=0,
         help="Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process.",
     )
+    parser.add_argument(
+        "--pin_memory",
+        action="store_true",
+        help="Whether or not to use the pinned memory setting in pytorch dataloader.",
+    )
 
 
 def _get_validation_args(parser: argparse.ArgumentParser) -> None:
@@ -104,6 +109,12 @@ def _get_validation_args(parser: argparse.ArgumentParser) -> None:
         type=str,
         default=None,
         help="One or more prompt(s) that is used during validation to verify that the model is learning. Multiple validation prompts should be separated by the '--validation_prompt_seperator' string.",
+    )
+    parser.add_argument(
+        "--validation_images",
+        type=str,
+        default=None,
+        help="One or more image path(s)/URLs that is used during validation to verify that the model is learning. Multiple validation paths should be separated by the '--validation_prompt_seperator' string. These should correspond to the order of the validation prompts.",
     )
     parser.add_argument(
         "--validation_prompt_separator",
@@ -134,6 +145,12 @@ def _get_validation_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=False,
         help="Whether or not to use the default cosine dynamic guidance schedule when sampling validation videos.",
+    )
+    parser.add_argument(
+        "--enable_model_cpu_offload",
+        action="store_true",
+        default=False,
+        help="Whether or not to enable model-wise CPU offloading when performing validation/testing to save memory.",
     )
 
 
@@ -174,6 +191,12 @@ def _get_training_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=720,
         help="All input videos are resized to this width.",
+    )
+    parser.add_argument(
+        "--video_reshape_mode",
+        type=str,
+        default=None,
+        help="All input videos are reshaped to this mode. Choose between ['center', 'random', 'none']",
     )
     parser.add_argument("--fps", type=int, default=8, help="All input videos will be used at this FPS.")
     parser.add_argument(
@@ -293,6 +316,12 @@ def _get_training_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=False,
         help="Whether or not to use VAE tiling for saving memory.",
+    )
+    parser.add_argument(
+        "--noised_image_dropout",
+        type=float,
+        default=0.05,
+        help="Image condition dropout probability when finetuning image-to-video.",
     )
 
 

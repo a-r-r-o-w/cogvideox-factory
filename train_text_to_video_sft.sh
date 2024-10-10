@@ -38,6 +38,8 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --height_buckets 480 \
           --width_buckets 720 \
           --frame_buckets 49 \
+          --dataloader_num_workers 8 \
+          --pin_memory \
           --validation_prompt \"Tom, the mischievous gray cat, is sprawled out on a vibrant red pillow, his body relaxed and his eyes half-closed, as if he's just woken up or is about to doze off. His white paws are stretched out in front of him, and his tail is casually draped over the edge of the pillow. The setting appears to be a cozy corner of a room, with a warm yellow wall in the background and a hint of a wooden floor. The scene captures a rare moment of tranquility for Tom, contrasting with his usual energetic and playful demeanor:::A panda, dressed in a small, red jacket and a tiny hat, sits on a wooden stool in a serene bamboo forest. The panda's fluffy paws strum a miniature acoustic guitar, producing soft, melodic tunes. Nearby, a few other pandas gather, watching curiously and some clapping in rhythm. Sunlight filters through the tall bamboo, casting a gentle glow on the scene. The panda's face is expressive, showing concentration and joy as it plays. The background includes a small, flowing stream and vibrant green foliage, enhancing the peaceful and magical atmosphere of this unique musical performance\" \
           --validation_prompt_separator ::: \
           --num_validation_videos 1 \
@@ -53,7 +55,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --gradient_checkpointing \
           --learning_rate $learning_rate \
           --lr_scheduler $lr_schedule \
-          --lr_warmup_steps 200 \
+          --lr_warmup_steps 800 \
           --lr_num_cycles 1 \
           --enable_slicing \
           --enable_tiling \
@@ -63,7 +65,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --weight_decay 0.001 \
           --max_grad_norm 1.0 \
           --allow_tf32 \
-          --report_to wandb
+          --report_to wandb \
           --nccl_timeout 1800"
         
         echo "Running command: $cmd"

@@ -2,11 +2,14 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import torch
+import torchvision.transforms as TT
 from accelerate.logging import get_logger
 from torch.utils.data import Dataset, Sampler
 from torchvision import transforms
+from torchvision.transforms import InterpolationMode
 from torchvision.transforms.functional import resize
 
 
@@ -37,6 +40,7 @@ class VideoDataset(Dataset):
         frame_buckets: List[int] = None,
         load_tensors: bool = False,
         random_flip: Optional[float] = None,
+        image_to_video: bool = False,
     ) -> None:
         super().__init__()
 
@@ -51,6 +55,7 @@ class VideoDataset(Dataset):
         self.frame_buckets = frame_buckets or FRAME_BUCKETS
         self.load_tensors = load_tensors
         self.random_flip = random_flip
+        self.image_to_video = image_to_video
 
         self.resolutions = [
             (f, h, w) for h in self.height_buckets for w in self.width_buckets for f in self.frame_buckets
@@ -104,23 +109,24 @@ class VideoDataset(Dataset):
             return index
 
         if self.load_tensors:
-            latents, prompt_embeds = self._preprocess_video(self.video_paths[index])
+            image_latents, video_latents, prompt_embeds = self._preprocess_video(self.video_paths[index])
 
             # This is hardcoded for now.
             # The VAE's temporal compression ratio is 4.
             # The VAE's spatial compression ratio is 8.
-            latent_num_frames = latents.size(1)
+            latent_num_frames = video_latents.size(1)
             if latent_num_frames % 2 == 0:
                 num_frames = latent_num_frames * 4
             else:
                 num_frames = (latent_num_frames - 1) * 4 + 1
 
-            height = latents.size(2) * 8
-            width = latents.size(3) * 8
+            height = video_latents.size(2) * 8
+            width = video_latents.size(3) * 8
 
             return {
                 "prompt": prompt_embeds,
-                "video": latents,
+                "image": image_latents,
+                "video": video_latents,
                 "video_metadata": {
                     "num_frames": num_frames,
                     "height": height,
@@ -128,10 +134,11 @@ class VideoDataset(Dataset):
                 },
             }
         else:
-            video, _ = self._preprocess_video(self.video_paths[index])
+            image, video, _ = self._preprocess_video(self.video_paths[index])
 
             return {
                 "prompt": self.id_token + self.prompts[index],
+                "image": image,
                 "video": video,
                 "video_metadata": {
                     "num_frames": video.shape[0],
@@ -204,7 +211,9 @@ class VideoDataset(Dataset):
             frames = frames.permute(0, 3, 1, 2).contiguous()
             frames = torch.stack([self.video_transforms(frame) for frame in frames], dim=0)
 
-            return frames, None
+            image = frames[:1].clone() if self.image_to_video else None
+
+            return image, frames, None
 
     def _load_preprocessed_latents_and_embeds(self, path: Path) -> Tuple[torch.Tensor, torch.Tensor]:
         filename_without_ext = path.name.split(".")[0]
@@ -212,28 +221,34 @@ class VideoDataset(Dataset):
 
         # The current path is something like: /a/b/c/d/videos/00001.mp4
         # We need to reach: /a/b/c/d/latents/00001.pt
+        images_path = path.parent.parent.joinpath("image_latents")
         latents_path = path.parent.parent.joinpath("latents")
         embeds_path = path.parent.parent.joinpath("embeddings")
 
-        if not latents_path.exists() or not embeds_path.exists():
+        if not latents_path.exists() or not embeds_path.exists() or (self.image_to_video and not images_path.exists()):
             raise ValueError(
-                f"When setting the load_tensors parameter to `True`, it is expected that the `{self.data_root=}` contains two folders named `latents` and `embeddings`. However, these folders were not found. Please make sure to have prepared your data correctly using `prepare_data.py`."
+                f"When setting the load_tensors parameter to `True`, it is expected that the `{self.data_root=}` contains two folders named `latents` and `embeddings`. However, these folders were not found. Please make sure to have prepared your data correctly using `prepare_data.py`. Additionally, if you're training image-to-video, it is expected that an `image_latents` folder is also present."
             )
 
+        if self.image_to_video:
+            image_filepath = images_path.joinpath(pt_filename)
         latent_filepath = latents_path.joinpath(pt_filename)
         embeds_filepath = embeds_path.joinpath(pt_filename)
 
         if not latent_filepath.is_file() or not embeds_filepath.is_file():
+            if self.image_to_video:
+                image_filepath = image_filepath.as_posix()
             latent_filepath = latent_filepath.as_posix()
             embeds_filepath = embeds_filepath.as_posix()
             raise ValueError(
                 f"The file {latent_filepath=} or {embeds_filepath=} could not be found. Please ensure that you've correctly executed `prepare_dataset.py`."
             )
 
+        images = torch.load(image_filepath, map_location="cpu", weights_only=True) if self.image_to_video else None
         latents = torch.load(latent_filepath, map_location="cpu", weights_only=True)
         embeds = torch.load(embeds_filepath, map_location="cpu", weights_only=True)
 
-        return latents, embeds
+        return images, latents, embeds
 
 
 class VideoDatasetWithResizing(VideoDataset):
@@ -258,9 +273,76 @@ class VideoDatasetWithResizing(VideoDataset):
 
             nearest_res = self._find_nearest_resolution(frames.shape[2], frames.shape[3])
             frames_resized = torch.stack([resize(frame, nearest_res) for frame in frames], dim=0)
-
             frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
-            return frames, None
+
+            image = frames[:1].clone() if self.image_to_video else None
+
+            return image, frames, None
+
+    def _find_nearest_resolution(self, height, width):
+        nearest_res = min(self.resolutions, key=lambda x: abs(x[1] - height) + abs(x[2] - width))
+        return nearest_res[1], nearest_res[2]
+
+
+class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
+    def __init__(self, video_reshape_mode: str = "center", *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.video_reshape_mode = video_reshape_mode
+
+    def _resize_for_rectangle_crop(self, arr, image_size):
+        reshape_mode = self.video_reshape_mode
+        if arr.shape[3] / arr.shape[2] > image_size[1] / image_size[0]:
+            arr = resize(
+                arr,
+                size=[image_size[0], int(arr.shape[3] * image_size[0] / arr.shape[2])],
+                interpolation=InterpolationMode.BICUBIC,
+            )
+        else:
+            arr = resize(
+                arr,
+                size=[int(arr.shape[2] * image_size[1] / arr.shape[3]), image_size[1]],
+                interpolation=InterpolationMode.BICUBIC,
+            )
+
+        h, w = arr.shape[2], arr.shape[3]
+        arr = arr.squeeze(0)
+
+        delta_h = h - image_size[0]
+        delta_w = w - image_size[1]
+
+        if reshape_mode == "random" or reshape_mode == "none":
+            top = np.random.randint(0, delta_h + 1)
+            left = np.random.randint(0, delta_w + 1)
+        elif reshape_mode == "center":
+            top, left = delta_h // 2, delta_w // 2
+        else:
+            raise NotImplementedError
+        arr = TT.functional.crop(arr, top=top, left=left, height=image_size[0], width=image_size[1])
+        return arr
+
+    def _preprocess_video(self, path: Path) -> torch.Tensor:
+        if self.load_tensors:
+            return self._load_preprocessed_latents_and_embeds(path)
+        else:
+            video_reader = decord.VideoReader(uri=path.as_posix())
+            video_num_frames = len(video_reader)
+            nearest_frame_bucket = min(
+                self.frame_buckets, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
+            )
+
+            frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
+
+            frames = video_reader.get_batch(frame_indices)
+            frames = frames[:nearest_frame_bucket].float()
+            frames = frames.permute(0, 3, 1, 2).contiguous()
+
+            nearest_res = self._find_nearest_resolution(frames.shape[2], frames.shape[3])
+            frames_resized = self._resize_for_rectangle_crop(frames, nearest_res)
+            frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
+
+            image = frames[:1].clone() if self.image_to_video else None
+
+            return image, frames, None
 
     def _find_nearest_resolution(self, height, width):
         nearest_res = min(self.resolutions, key=lambda x: abs(x[1] - height) + abs(x[2] - width))
