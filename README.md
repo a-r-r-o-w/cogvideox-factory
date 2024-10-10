@@ -2,6 +2,12 @@
 
 Fine-tune Cog family of video models for custom video generation under 24GB of GPU memory ⚡️📼
 
+<table align="center">
+<tr>
+  <td align="center"><video src="https://huggingface.co/datasets/a-r-r-o-w/randoms/resolve/main/CogVideoX-LoRA.mp4" autoplay>Your browser does not support the video tag.</video></td>
+</tr>
+</table>
+
 ## Quickstart
 
 Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt`.
@@ -93,7 +99,7 @@ huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-D
 
 This dataset is already prepared in the expected format and ready to use. However, using video datasets directly can lead to OOMs on smaller VRAM GPUs because it requires loading the [VAE](https://huggingface.co/THUDM/CogVideoX-5b/tree/main/vae) (to encode videos to latent space) and the massive [T5-XXL](https://huggingface.co/google/t5-v1_1-xxl/) text encoder. In order to lower these memory requirements, one can precompute the latents and embeddings using the `training/prepare_dataset.py` script.
 
-Fill in, or modify, the parameters in `prepare_dataset.sh` and execute it to obtain the precomputed latents and embeddings. The script also supports PyTorch DDP so that large datasets can be parallely encoded using multiple GPUs (modify the `NUM_GPUS` parameter).
+Fill in, or modify, the parameters in `prepare_dataset.sh` and execute it to obtain the precomputed latents and embeddings (make sure to specify `--save_tensors` to save precomputed artifacts). To use them during training, make sure to specify the `--load_tensors` flag, otherwise the videos will be used as-is and require loading the text encoder and VAE. The script also supports PyTorch DDP so that large datasets can be parallely encoded using multiple GPUs (modify the `NUM_GPUS` parameter).
 
 ## Training
 
