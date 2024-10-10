@@ -2,7 +2,7 @@
 
 [中文阅读](./README_zh.md)
 
-Fine-tune Cog family of video models for custom video generation under 24GB of GPU memory ⚡️📼
+Fine-tune Cog family of video models for custom video generation under 24GB of GPU memory, support multi resolutions ⚡️📼
 
 <table align="center">
 <tr>
@@ -23,7 +23,8 @@ huggingface-cli download \
   --local-dir video-dataset-disney
 ```
 
-Then launch LoRA fine-tuning for text-to-video (modify the different hyperparameters, dataset root, and other configuration options as per your choice):
+Then launch LoRA fine-tuning for text-to-video (modify the different hyperparameters, dataset root, and other
+configuration options as per your choice):
 
 ```bash
 # For LoRA finetuning of the text-to-video CogVideoX models
@@ -36,7 +37,8 @@ Then launch LoRA fine-tuning for text-to-video (modify the different hyperparame
 ./train_image_to_video_lora.sh
 ```
 
-Assuming your LoRA is saved and pushed to the HF Hub, and named `my-awesome-name/my-awesome-lora`, we can now use the finetuned model for inference:
+Assuming your LoRA is saved and pushed to the HF Hub, and named `my-awesome-name/my-awesome-lora`, we can now use the
+finetuned model for inference:
 
 ```diff
 import torch
@@ -53,31 +55,56 @@ video = pipe("<my-awesome-prompt>").frames[0]
 export_to_video(video, "output.mp4", fps=8)
 ```
 
-**Note:** For Image-to-Video finetuning, you must install diffusers from [this](https://github.com/huggingface/diffusers/pull/9482) branch (which adds lora loading support in CogVideoX image-to-video) until it is merged.
+**Note:** For Image-to-Video finetuning, you must install diffusers
+from [this](https://github.com/huggingface/diffusers/pull/9482) branch (which adds lora loading support in CogVideoX
+image-to-video) until it is merged.
 
-Below we provide additional sections detailing on more options explored in this repository. They all attempt to make fine-tuning for video models as accessible as possible by reducing memory requirements as much as possible.
+Below we provide additional sections detailing on more options explored in this repository. They all attempt to make
+fine-tuning for video models as accessible as possible by reducing memory requirements as much as possible.
 
 ## Dataset Preparation
 
-Create two files where one file contains line-separated prompts and another file contains line-separated paths to video data (the path to video files must be relative to the path you pass when specifying `--data_root`). Let's take a look at an example to understand this better!
+Create two files: one containing line-separated prompts, and the other containing line-separated paths to video files (
+video file paths must be relative to the path you specify with `--data_root`). Let's understand this better with an
+example!
 
-Assume you've specified `--data_root` as `/dataset`, and that this directory contains the files: `prompt.txt` and `videos.txt`.
+Assume your specified `--data_root` is `/dataset`, and this directory contains the files `prompts.txt` and `videos.txt`.
 
-The `prompt.txt` file should contain line-separated prompts:
+### Preparing the Prompts Dataset
+
+The `prompts.txt` file should contain line-separated prompts. Please note that the prompts must be in English, and it is
+recommended to use the [prompt polishing script](https://github.com/THUDM/CogVideo/blob/main/inference/convert_demo.py)
+for refinement. Alternatively, you can use [CogVideo-caption](https://huggingface.co/THUDM/cogvlm2-llama3-caption) for
+captioning:
 
 ```
 A black and white animated sequence featuring a rabbit, named Rabbity Ribfried, and an anthropomorphic goat in a musical, playful environment, showcasing their evolving interaction.
-A black and white animated sequence on a ship's deck features a bulldog character, named Bully Bulldoger, showcasing exaggerated facial expressions and body language. The character progresses from confident to focused, then to strained and distressed, displaying a range of emotions as it navigates challenges. The ship's interior remains static in the background, with minimalistic details such as a bell and open door. The character's dynamic movements and changing expressions drive the narrative, with no camera movement to distract from its evolving reactions and physical gestures.
+A black and white animated sequence on a ship’s deck features a bulldog character, named Bully Bulldoger, showcasing exaggerated facial expressions and body language. The character progresses from confident to focused, then to strained and distressed, displaying a range of emotions as it navigates challenges. The ship’s interior remains static in the background, with minimalistic details such as a bell and open door. The character’s dynamic movements and changing expressions drive the narrative, with no camera movement to distract from its evolving reactions and physical gestures.
 ...
+
 ```
 
-The `videos.txt` file should contain line-separate paths to video files. Note that the path should be _relative_ to the `--data_root` directory.
+### Preparing the Video Dataset
+
+The framework supports the following specific resolutions and frame counts:
+
+- **Resolutions (Width * Height) Supported**:
+    - Any width * height divisible by 32 between 256 and 2048. For example, `720 * 480`, `1920 * 1020`.
+
+- **Frame Counts (Frames) Supported**:
+    - 16, 24, 32, 48, 64, 80. The frame count must be divisible by 4.
+
+The `videos.txt` file should contain line-separated paths to video files. Please note that the paths must be relative to
+the `--data_root` directory. The format should be as follows:
+
+For developers interested in more details, you can check out the relevant `BucketSampler` code.
+
+### Data Structure
 
 ```bash
 videos/00000.mp4
 videos/00001.mp4
 ...
-```
 
 Overall, this is how your dataset would look like if you ran the `tree` command on the dataset root directory:
 
@@ -91,21 +118,36 @@ Overall, this is how your dataset would look like if you ran the `tree` command 
     ├── ...
 ```
 
-When using this format, the `--caption_column` must be `prompt.txt` and `--video_column` must be `videos.txt`. If you have your data stored in a CSV file instead, you can also specify `--dataset_file` as the path to CSV, and the `--caption_column` and `--video_column` as the actual column names in the CSV file. The [test_dataset](./tests/test_dataset.py) file contains some easy-to-understand examples for both formats.
+When using this format, the `--caption_column` must be `prompt.txt` and `--video_column` must be `videos.txt`. If you
+have your data stored in a CSV file instead, you can also specify `--dataset_file` as the path to CSV, and
+the `--caption_column` and `--video_column` as the actual column names in the CSV file.
+The [test_dataset](./tests/test_dataset.py) file contains some easy-to-understand examples for both formats.
 
-As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disney-VideoGeneration-Dataset) Disney dataset for finetuning. To download, one can use the 🤗 Hugging Face CLI.
+As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disney-VideoGeneration-Dataset) Disney
+dataset for finetuning. To download, one can use the 🤗 Hugging Face CLI.
 
 ```bash
 huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir video-dataset-disney
 ```
 
-This dataset is already prepared in the expected format and ready to use. However, using video datasets directly can lead to OOMs on smaller VRAM GPUs because it requires loading the [VAE](https://huggingface.co/THUDM/CogVideoX-5b/tree/main/vae) (to encode videos to latent space) and the massive [T5-XXL](https://huggingface.co/google/t5-v1_1-xxl/) text encoder. In order to lower these memory requirements, one can precompute the latents and embeddings using the `training/prepare_dataset.py` script.
+This dataset is already prepared in the expected format and ready to use. However, using video datasets directly can
+lead to OOMs on smaller VRAM GPUs because it requires loading
+the [VAE](https://huggingface.co/THUDM/CogVideoX-5b/tree/main/vae) (to encode videos to latent space) and the
+massive [T5-XXL](https://huggingface.co/google/t5-v1_1-xxl/) text encoder. In order to lower these memory requirements,
+one can precompute the latents and embeddings using the `training/prepare_dataset.py` script.
 
-Fill in, or modify, the parameters in `prepare_dataset.sh` and execute it to obtain the precomputed latents and embeddings (make sure to specify `--save_tensors` to save precomputed artifacts). To use them during training, make sure to specify the `--load_tensors` flag, otherwise the videos will be used as-is and require loading the text encoder and VAE. The script also supports PyTorch DDP so that large datasets can be parallely encoded using multiple GPUs (modify the `NUM_GPUS` parameter).
+Fill in, or modify, the parameters in `prepare_dataset.sh` and execute it to obtain the precomputed latents and
+embeddings (make sure to specify `--save_tensors` to save precomputed artifacts). To use them during training, make sure
+to specify the `--load_tensors` flag, otherwise the videos will be used as-is and require loading the text encoder and
+VAE. The script also supports PyTorch DDP so that large datasets can be parallely encoded using multiple GPUs (modify
+the `NUM_GPUS` parameter).
 
 ## Training
 
-We provide training script for both text-to-video and image-to-video generation which are compatible with the [CogVideoX family of models](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce). Training can be launched with one of the `train*.sh` scripts based on the task you'd like to train. Let's take text-to-video LoRA finetuning as an example.
+We provide training script for both text-to-video and image-to-video generation which are compatible with
+the [CogVideoX family of models](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce). Training
+can be launched with one of the `train*.sh` scripts based on the task you'd like to train. Let's take text-to-video LoRA
+finetuning as an example.
 
 - Configure environment variables according as per your choice:
 
@@ -128,7 +170,10 @@ We provide training script for both text-to-video and image-to-video generation 
   MAX_TRAIN_STEPS=("3000")
   ```
 
-- Select which Accelerate configuration you would like to train with: `ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_1.yaml"`. We provide some default configurations in the `accelerate_configs/` directory - single GPU uncompiled/compiled, 2x GPU DDP, DeepSpeed, etc. You can create your own config files with custom settings using `accelerate config --config_file my_config.yaml`.
+- Select which Accelerate configuration you would like to train
+  with: `ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_1.yaml"`. We provide some default configurations in
+  the `accelerate_configs/` directory - single GPU uncompiled/compiled, 2x GPU DDP, DeepSpeed, etc. You can create your
+  own config files with custom settings using `accelerate config --config_file my_config.yaml`.
 
 - Specify the absolute paths and columns/files for captions and videos.
 
@@ -196,9 +241,11 @@ We provide training script for both text-to-video and image-to-video generation 
   done
   ```
 
-  To understand what the different parameters mean, you could either take a look at the [args](./training/args.py) file or run the training script with `--help`.
+  To understand what the different parameters mean, you could either take a look at the [args](./training/args.py) file
+  or run the training script with `--help`.
 
-Note: Training scripts are untested on MPS, so performance and memory requirements can differ widely compared to the CUDA reports below.
+Note: Training scripts are untested on MPS, so performance and memory requirements can differ widely compared to the
+CUDA reports below.
 
 ## Memory requirements
 
@@ -230,70 +277,89 @@ Note: Training scripts are untested on MPS, so performance and memory requiremen
 
 Supported and verified memory optimizations for training include:
 
-- `CPUOffloadOptimizer` from [`torchao`](https://github.com/pytorch/ao). You can read about its capabilities and limitations [here](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload). In short, it allows you to use the CPU for storing trainable parameters and gradients. This results in the optimizer step happening on the CPU, which requires a fast CPU optimizer, such as `torch.optim.AdamW(fused=True)` or applying `torch.compile` on the optimizer step. Additionally, it is recommended to not `torch.compile` your model for training. Gradient clipping and accumulation is not supported yet either.
-- Low-bit optimizers from [`bitsandbytes`](https://huggingface.co/docs/bitsandbytes/optimizers). TODO: to test and make [`torchao`](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) ones work
-- DeepSpeed Zero2: Since we rely on `accelerate`, follow [this guide](https://huggingface.co/docs/accelerate/en/usage_guides/deepspeed) to configure your `accelerate` installation to enable training with DeepSpeed Zero2 optimizations. 
+- `CPUOffloadOptimizer` from [`torchao`](https://github.com/pytorch/ao). You can read about its capabilities and
+  limitations [here](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload). In
+  short, it allows you to use the CPU for storing trainable parameters and gradients. This results in the optimizer step
+  happening on the CPU, which requires a fast CPU optimizer, such as `torch.optim.AdamW(fused=True)` or
+  applying `torch.compile` on the optimizer step. Additionally, it is recommended to not `torch.compile` your model for
+  training. Gradient clipping and accumulation is not supported yet either.
+- Low-bit optimizers from [`bitsandbytes`](https://huggingface.co/docs/bitsandbytes/optimizers). TODO: to test and
+  make [`torchao`](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) ones work
+- DeepSpeed Zero2: Since we rely on `accelerate`,
+  follow [this guide](https://huggingface.co/docs/accelerate/en/usage_guides/deepspeed) to configure your `accelerate`
+  installation to enable training with DeepSpeed Zero2 optimizations.
 
 > [!IMPORTANT]
-> The memory requirements are reported after running the `training/prepare_dataset.py`, which converts the videos and captions to latents and embeddings. During training, we directly load the latents and embeddings, and do not require the VAE or the T5 text encoder. However, if you perform validation/testing, these must be loaded and increase the amount of required memory. Not performing validation/testing saves a significant amount of memory, which can be used to focus solely on training if you're on smaller VRAM GPUs.
+> The memory requirements are reported after running the `training/prepare_dataset.py`, which converts the videos and
+> captions to latents and embeddings. During training, we directly load the latents and embeddings, and do not require
+> the
+> VAE or the T5 text encoder. However, if you perform validation/testing, these must be loaded and increase the amount
+> of
+> required memory. Not performing validation/testing saves a significant amount of memory, which can be used to focus
+> solely on training if you're on smaller VRAM GPUs.
 >
-> If you choose to run validation/testing, you can save some memory on lower VRAM GPUs by specifying `--enable_model_cpu_offload`.
+> If you choose to run validation/testing, you can save some memory on lower VRAM GPUs by
+> specifying `--enable_model_cpu_offload`.
 
 ### LoRA finetuning
 
 > [!NOTE]
-> The memory requirements for image-to-video lora finetuning are similar to that of text-to-video on `THUDM/CogVideoX-5b`, so it hasn't been reported explicitly.
+> The memory requirements for image-to-video lora finetuning are similar to that of text-to-video
+> on `THUDM/CogVideoX-5b`, so it hasn't been reported explicitly.
 >
-> Additionally, to prepare test images for I2V finetuning, you could either generate them on-the-fly by modifying the script, or extract some frames from your training data using:
+> Additionally, to prepare test images for I2V finetuning, you could either generate them on-the-fly by modifying the
+> script, or extract some frames from your training data using:
 > `ffmpeg -i input.mp4 -frames:v 1 frame.png`,
 > or provide a URL to a valid and accessible image.
 
 <details>
 <summary> AdamW </summary>
 
-**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory
+measurements have not been specified.
 
 With `train_batch_size = 1`:
 
 |       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.764          |         46.918          |       24.234         |
-| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.121          |       24.234         |
-| THUDM/CogVideoX-2b |    64     |          False         |         13.035         |          44.314          |         47.469          |       24.469         |
-| THUDM/CogVideoX-2b |    64     |          True          |         13.036         |          13.035          |         21.564          |       24.500         |
-| THUDM/CogVideoX-2b |    256    |          False         |         13.095         |          45.826          |         48.990          |       25.543         |
-| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          13.095          |         22.344          |       25.537         |
-| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          19.742          |         28.746          |       38.123         |
-| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          20.818          |         30.338          |       38.738         |
-| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          22.119          |         31.939          |       41.537         |
+| THUDM/CogVideoX-2b |    16     |         False          |         12.945         |          43.764          |         46.918          |        24.234        |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.121          |        24.234        |
+| THUDM/CogVideoX-2b |    64     |         False          |         13.035         |          44.314          |         47.469          |        24.469        |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.036         |          13.035          |         21.564          |        24.500        |
+| THUDM/CogVideoX-2b |    256    |         False          |         13.095         |          45.826          |         48.990          |        25.543        |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          13.095          |         22.344          |        25.537        |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          19.742          |         28.746          |        38.123        |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          20.818          |         30.338          |        38.738        |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          22.119          |         31.939          |        41.537        |
 
 With `train_batch_size = 4`:
 
 |       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.803          |         21.814          |       24.322         |
-| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          22.254          |         22.254          |       24.572         |
-| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          22.020          |         22.033          |       25.574         |
-| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          46.492          |         46.492          |       38.197         |
-| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          47.805          |         47.805          |       39.365         |
-| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.268          |         47.332          |       41.008         |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.803          |         21.814          |        24.322        |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          22.254          |         22.254          |        24.572        |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          22.020          |         22.033          |        25.574        |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          46.492          |         46.492          |        38.197        |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          47.805          |         47.805          |        39.365        |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.268          |         47.332          |        41.008        |
 
 </details>
 
 <details>
 <summary> AdamW (8-bit bitsandbytes) </summary>
 
-**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory
+measurements have not been specified.
 
 With `train_batch_size = 1`:
 
 |       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.732          |         46.887          |        24.195        |
+| THUDM/CogVideoX-2b |    16     |         False          |         12.945         |          43.732          |         46.887          |        24.195        |
 | THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.430          |        24.195        |
-| THUDM/CogVideoX-2b |    64     |          False         |         13.035         |          44.004          |         47.158          |        24.369        |
+| THUDM/CogVideoX-2b |    64     |         False          |         13.035         |          44.004          |         47.158          |        24.369        |
 | THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          13.035          |         21.297          |        24.357        |
-| THUDM/CogVideoX-2b |    256    |          False         |         13.035         |          45.291          |         48.455          |        24.836        |
+| THUDM/CogVideoX-2b |    256    |         False          |         13.035         |          45.291          |         48.455          |        24.836        |
 | THUDM/CogVideoX-2b |    256    |          True          |         13.035         |          13.035          |         21.625          |        24.869        |
 | THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          19.742          |         28.602          |        38.049        |
 | THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          20.818          |         29.359          |        38.520        |
@@ -303,44 +369,45 @@ With `train_batch_size = 4`:
 
 |       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.734          |         21.775          |       24.281         |
-| THUDM/CogVideoX-2b |    64     |          True          |         13.036         |          21.941          |         21.941          |       24.445         |
-| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          22.020          |         22.266          |       24.943         |
-| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          46.320          |         46.326          |       38.104         |
-| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          46.820          |         46.820          |       38.588         |
-| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.920          |         47.980          |       40.002         |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.734          |         21.775          |        24.281        |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.036         |          21.941          |         21.941          |        24.445        |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          22.020          |         22.266          |        24.943        |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          46.320          |         46.326          |        38.104        |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          46.820          |         46.820          |        38.588        |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.920          |         47.980          |        40.002        |
 
 </details>
 
 <details>
 <summary> AdamW + CPUOffloadOptimizer (with gradient offloading) </summary>
 
-**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory
+measurements have not been specified.
 
 With `train_batch_size = 1`:
 
 |       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.705          |         46.859          |       24.180         |
-| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.395          |       24.180         |
-| THUDM/CogVideoX-2b |    64     |          False         |         13.035         |          43.916          |         47.070          |       24.234         |
-| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          13.035          |         20.887          |       24.266         |
-| THUDM/CogVideoX-2b |    256    |          False         |         13.095         |          44.947          |         48.111          |       24.607         |
-| THUDM/CogVideoX-2b |    256    |          True          |         13.095         |          13.095          |         21.391          |       24.635         |
-| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          19.742          |         28.533          |       38.002         |
-| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          20.006          |         29.107          |       38.785         |
-| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          20.771          |         30.078          |       39.559         |
+| THUDM/CogVideoX-2b |    16     |         False          |         12.945         |          43.705          |         46.859          |        24.180        |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.395          |        24.180        |
+| THUDM/CogVideoX-2b |    64     |         False          |         13.035         |          43.916          |         47.070          |        24.234        |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          13.035          |         20.887          |        24.266        |
+| THUDM/CogVideoX-2b |    256    |         False          |         13.095         |          44.947          |         48.111          |        24.607        |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.095         |          13.095          |         21.391          |        24.635        |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          19.742          |         28.533          |        38.002        |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          20.006          |         29.107          |        38.785        |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          20.771          |         30.078          |        39.559        |
 
 With `train_batch_size = 4`:
 
 |       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.709          |         21.762          |       24.254         |
-| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          21.844          |         21.855          |       24.338         |
-| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          22.020          |         22.031          |       24.709         |
-| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          46.262          |         46.297          |       38.400         |
-| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          46.561          |         46.574          |       38.840         |
-| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.268          |         47.332          |       39.623         |
+| THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.709          |         21.762          |        24.254        |
+| THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          21.844          |         21.855          |        24.338        |
+| THUDM/CogVideoX-2b |    256    |          True          |         13.094         |          22.020          |         22.031          |        24.709        |
+| THUDM/CogVideoX-5b |    16     |          True          |         19.742         |          46.262          |         46.297          |        38.400        |
+| THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          46.561          |         46.574          |        38.840        |
+| THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.268          |         47.332          |        39.623        |
 
 </details>
 
@@ -353,29 +420,32 @@ With `train_batch_size = 1`:
 
 |       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |         13.141         |          13.141          |         21.070          |       24.602         |
-| THUDM/CogVideoX-5b |         20.170         |          20.170          |         28.662          |       38.957         |
+| THUDM/CogVideoX-2b |         13.141         |          13.141          |         21.070          |        24.602        |
+| THUDM/CogVideoX-5b |         20.170         |          20.170          |         28.662          |        38.957        |
 
 With `train_batch_size = 4`:
 
 |       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |         13.141         |          19.854          |         20.836          |       24.709         |
-| THUDM/CogVideoX-5b |         20.170         |          40.635          |         40.699          |       39.027         |
+| THUDM/CogVideoX-2b |         13.141         |          19.854          |         20.836          |        24.709        |
+| THUDM/CogVideoX-5b |         20.170         |          40.635          |         40.699          |        39.027        |
 
 </details>
 
 ### Full finetuning
 
 > [!NOTE]
-> The memory requirements for image-to-video full finetuning are similar to that of text-to-video on `THUDM/CogVideoX-5b`, so it hasn't been reported explicitly.
+> The memory requirements for image-to-video full finetuning are similar to that of text-to-video
+> on `THUDM/CogVideoX-5b`, so it hasn't been reported explicitly.
 >
-> Additionally, to prepare test images for I2V finetuning, you could either generate them on-the-fly by modifying the script, or extract some frames from your training data using:
+> Additionally, to prepare test images for I2V finetuning, you could either generate them on-the-fly by modifying the
+> script, or extract some frames from your training data using:
 > `ffmpeg -i input.mp4 -frames:v 1 frame.png`,
 > or provide a URL to a valid and accessible image.
 
 > [!NOTE]
-> Trying to run full finetuning without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+> Trying to run full finetuning without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements
+> have not been specified.
 
 <details>
 <summary> AdamW </summary>
@@ -384,15 +454,15 @@ With `train_batch_size = 1`:
 
 |       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |          True          |         16.396         |          33.934          |         43.848          |       37.520         |
-| THUDM/CogVideoX-5b |          True          |         30.061         |          OOM             |         OOM             |       OOM            |
+| THUDM/CogVideoX-2b |          True          |         16.396         |          33.934          |         43.848          |        37.520        |
+| THUDM/CogVideoX-5b |          True          |         30.061         |           OOM            |           OOM           |         OOM          |
 
 With `train_batch_size = 4`:
 
 |       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |          True          |         16.396         |          38.281          |         48.341          |       37.544         |
-| THUDM/CogVideoX-5b |          True          |         30.061         |          OOM             |         OOM             |       OOM            |
+| THUDM/CogVideoX-2b |          True          |         16.396         |          38.281          |         48.341          |        37.544        |
+| THUDM/CogVideoX-5b |          True          |         30.061         |           OOM            |           OOM           |         OOM          |
 
 </details>
 
@@ -403,15 +473,15 @@ With `train_batch_size = 1`:
 
 |       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |          True          |         16.396         |          16.447          |         27.555          |       27.156         |
-| THUDM/CogVideoX-5b |          True          |         30.061         |          52.826          |         58.570          |       49.541         |
+| THUDM/CogVideoX-2b |          True          |         16.396         |          16.447          |         27.555          |        27.156        |
+| THUDM/CogVideoX-5b |          True          |         30.061         |          52.826          |         58.570          |        49.541        |
 
 With `train_batch_size = 4`:
 
 |       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |          True          |         16.396         |          27.930          |         27.990          |       27.326         |
-| THUDM/CogVideoX-5b |          True          |         16.396         |          66.648          |         66.705          |       48.828         |
+| THUDM/CogVideoX-2b |          True          |         16.396         |          27.930          |         27.990          |        27.326        |
+| THUDM/CogVideoX-5b |          True          |         16.396         |          66.648          |         66.705          |        48.828        |
 
 </details>
 
@@ -422,15 +492,15 @@ With `train_batch_size = 1`:
 
 |       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |          True          |         16.396         |          16.396          |         26.100          |       23.832         |
-| THUDM/CogVideoX-5b |          True          |         30.061         |          39.359          |         48.307          |       37.947         |
+| THUDM/CogVideoX-2b |          True          |         16.396         |          16.396          |         26.100          |        23.832        |
+| THUDM/CogVideoX-5b |          True          |         30.061         |          39.359          |         48.307          |        37.947        |
 
 With `train_batch_size = 4`:
 
 |       model        | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |          True          |         16.396         |          27.916          |         27.975          |       23.936         |
-| THUDM/CogVideoX-5b |          True          |         30.061         |          66.607          |         66.668          |       38.061         |
+| THUDM/CogVideoX-2b |          True          |         16.396         |          27.916          |         27.975          |        23.936        |
+| THUDM/CogVideoX-5b |          True          |         30.061         |          66.607          |         66.668          |        38.061        |
 
 </details>
 
@@ -443,22 +513,26 @@ With `train_batch_size = 1`:
 
 |       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |         13.111         |          13.111          |         20.328          |       23.867         |
-| THUDM/CogVideoX-5b |         19.762         |          19.998          |         27.697          |       38.018         |
+| THUDM/CogVideoX-2b |         13.111         |          13.111          |         20.328          |        23.867        |
+| THUDM/CogVideoX-5b |         19.762         |          19.998          |         27.697          |        38.018        |
 
 With `train_batch_size = 4`:
 
 |       model        | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
-| THUDM/CogVideoX-2b |         13.111         |          21.188          |         21.254          |       23.869         |
-| THUDM/CogVideoX-5b |         19.762         |          43.465          |         43.531          |       38.082         |
+| THUDM/CogVideoX-2b |         13.111         |          21.188          |         21.254          |        23.869        |
+| THUDM/CogVideoX-5b |         19.762         |          43.465          |         43.531          |        38.082        |
 
 </details>
 
 > [!NOTE]
-> - `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
+> - `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the
+    activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory
+    and spend some memory to perform inference. In order to reduce total memory required to perform training, one can
+    choose to not perform validation/testing as part of the training script.
 >
-> - `memory_before_validation` is the true indicator of the peak memory required for training if you choose to not perform validation/testing.
+> - `memory_before_validation` is the true indicator of the peak memory required for training if you choose to not
+    perform validation/testing.
 
 <table align="center">
 <tr>
@@ -480,9 +554,12 @@ With `train_batch_size = 4`:
 - [ ] Support for QLoRA (priority), and other types of high usage LoRAs methods
 - [x] Test scripts with memory-efficient optimizer from bitsandbytes
 - [x] Test scripts with CPUOffloadOptimizer, etc.
-- [ ] Test scripts with torchao quantization, and low bit memory optimizers (Currently errors with AdamW (8/4-bit torchao))
-- [ ] Test scripts with AdamW (8-bit bitsandbytes) + CPUOffloadOptimizer (with gradient offloading) (Currently errors out)
-- [ ] [Sage Attention](https://github.com/thu-ml/SageAttention) (work with the authors to support backward pass, and optimize for A100)
+- [ ] Test scripts with torchao quantization, and low bit memory optimizers (Currently errors with AdamW (8/4-bit
+  torchao))
+- [ ] Test scripts with AdamW (8-bit bitsandbytes) + CPUOffloadOptimizer (with gradient offloading) (Currently errors
+  out)
+- [ ] [Sage Attention](https://github.com/thu-ml/SageAttention) (work with the authors to support backward pass, and
+  optimize for A100)
 
 > [!IMPORTANT]
 > Since our goal is to make the scripts as memory-friendly as possible we don't guarantee multi-GPU training.
