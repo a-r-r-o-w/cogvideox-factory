@@ -4,7 +4,7 @@ Fine-tune Cog family of video models for custom video generation under 24GB of G
 
 <table align="center">
 <tr>
-  <td align="center"><video src="https://huggingface.co/datasets/a-r-r-o-w/randoms/resolve/main/CogVideoX-LoRA.mp4" autoplay>Your browser does not support the video tag.</video></td>
+  <td align="center"><video src="./assets/CogVideoX-LoRA.webm">Your browser does not support the video tag.</video></td>
 </tr>
 </table>
 
