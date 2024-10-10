@@ -808,6 +808,7 @@ def main(args):
                         "use_dynamic_cfg": args.use_dynamic_cfg,
                         "height": args.height,
                         "width": args.width,
+                        "max_sequence_length": model_config.max_text_seq_length,
                     }
 
                     log_validation(
