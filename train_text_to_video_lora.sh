@@ -4,7 +4,7 @@ export WANDB_MODE="offline"
 export NCCL_P2P_DISABLE=1
 export TORCH_NCCL_ENABLE_MONITORING=0
 
-GPU_IDS="0,1,2,3,4,5,6,7"
+GPU_IDS="0"
 
 # Training Configurations
 # Experiment with as many hyperparameters as you want!
@@ -19,26 +19,22 @@ ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_1.yaml"
 # Absolute path to where the data is located. Make sure to have read the README for how to prepare data.
 # This example assumes you downloaded an already prepared dataset from HF CLI as follows:
 #   huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir /path/to/my/datasets/disney-dataset
-
-DATA_ROOT="/share/home/zyx/disney_cogvideox-encoded-multi"
-CAPTION_COLUMN="prompts.txt"
+DATA_ROOT="/path/to/my/datasets/disney-dataset"
+CAPTION_COLUMN="prompt.txt"
 VIDEO_COLUMN="videos.txt"
-MODEL_PATH="/share/official_pretrains/hf_home/CogVideoX-5b"
-
 
 # Launch experiments with different hyperparameters
 for learning_rate in "${LEARNING_RATES[@]}"; do
   for lr_schedule in "${LR_SCHEDULES[@]}"; do
     for optimizer in "${OPTIMIZERS[@]}"; do
       for steps in "${MAX_TRAIN_STEPS[@]}"; do
-        output_dir="cogvideox-lora__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
+        output_dir="/path/to/my/models/cogvideox-lora__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
         cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox_text_to_video_lora.py \
-          --pretrained_model_name_or_path $MODEL_PATH \
+          --pretrained_model_name_or_path THUDM/CogVideoX-5b \
           --data_root $DATA_ROOT \
           --caption_column $CAPTION_COLUMN \
           --video_column $VIDEO_COLUMN \
-          --load_tensors \
           --id_token BW_STYLE \
           --height_buckets 480 \
           --width_buckets 720 \

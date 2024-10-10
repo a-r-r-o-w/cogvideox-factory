@@ -1,12 +1,19 @@
 # CogVideoX Factory 🧪
 
+[Read this in English](./README_zh.md)
+
 在 24GB GPU 内存下微调 Cog 系列视频模型以生成自定义视频 ⚡️📼
 
-TODO：添加有趣的视频结果表
+<table align="center">
+<tr>
+  <td align="center"><video src="https://github.com/user-attachments/assets/aad07161-87cb-4784-9e6b-16d06581e3e5">Your browser does not support the video tag.</video></td>
+</tr>
+</table>
+
 
 ## 快速开始
 
-确保已安装所需的依赖：`pip install -r requirements.txt`。
+克隆此仓库并确保已安装所有依赖：`pip install -r requirements.txt`。
 
 然后下载数据集：
 
@@ -15,25 +22,39 @@ TODO：添加有趣的视频结果表
 huggingface-cli download   --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset   --local-dir video-dataset-disney
 ```
 
-然后启动文本到视频的 LoRA 微调：
+然后启动文本到视频的 LoRA 微调（根据您的需求修改不同的超参数、数据集根目录和其他配置选项）：
 
 ```bash
-TODO
+# 对 CogVideoX 文本到视频模型进行 LoRA 微调
+./train_text_to_video_lora.sh
+
+# 对 CogVideoX 文本到视频模型进行全微调
+./train_text_to_video_sft.sh
+
+# 对 CogVideoX 图像到视频模型进行 LoRA 微调
+./train_image_to_video_lora.sh
 ```
 
-我们现在可以使用训练好的模型进行推理：
+假设您的 LoRA 已保存并推送到 HF Hub，并命名为 `my-awesome-name/my-awesome-lora`，我们现在可以使用微调后的模型进行推理：
 
-```python
-TODO
+```diff
+import torch
+from diffusers import CogVideoXPipeline
+from diffusers import export_to_video
+
+pipe = CogVideoXPipeline.from_pretrained(
+    "THUDM/CogVideoX-5b", torch_dtype=torch.bfloat16
+).to("cuda")
++ pipe.load_lora_weights("my-awesome-name/my-awesome-lora", adapter_name=["cogvideox-lora"])
++ pipe.set_adapters(["cogvideox-lora"], [1.0])
+
+video = pipe("<my-awesome-prompt>").frames[0]
+export_to_video(video, "output.mp4", fps=8)
 ```
 
-我们还可以使用 LoRA 微调 5B 版本：
+**注意：** 对于图像到视频的微调，您必须从 [此](https://github.com/huggingface/diffusers/pull/9482) 分支安装 diffusers（该分支添加了 CogVideoX 图像到视频的 LoRA 加载支持），直到它被合并。
 
-```python
-TODO
-```
-
-在下方的部分中，我们提供了有关更多选项的详细信息，这些选项旨在使视频模型的微调尽可能易于使用。
+在下方的部分中，我们提供了在本仓库中探索的更多选项的详细信息。它们都试图通过尽可能减少内存需求，使视频模型的微调变得尽可能容易。
 
 ## 数据集准备
 
@@ -83,9 +104,9 @@ TODO：添加一个关于创建和使用预计算嵌入的部分。
 
 我们提供了与 [Cog 系列模型](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce) 兼容的文本到视频和图像到视频生成的训练脚本。
 
-查看 `*.sh` 文件
+查看 `*.sh` 文件。
 
-注意：未在 MPS 上测试
+注意：本代码未在 MPS 上测试，建议在 Linux 环境下使用 CUDA文件测试。
 
 ## 内存需求
 
@@ -101,7 +122,8 @@ TODO：添加一个关于创建和使用预计算嵌入的部分。
 支持和验证的内存优化训练选项包括：
 
 - [`torchao`](https://github.com/pytorch/ao) 中的 `CPUOffloadOptimizer`。您可以阅读它的能力和限制 [此处](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload)。简而言之，它允许您使用 CPU 存储可训练的参数和梯度。这导致优化器步骤在 CPU 上进行，需要一个快速的 CPU 优化器，例如 `torch.optim.AdamW(fused=True)` 或在优化器步骤上应用 `torch.compile`。此外，建议不要将模型编译用于训练。梯度裁剪和积累尚不支持。
-- [`bitsandbytes`](https://huggingface.co/docs/bitsandbytes/optimizers) 中的低位优化器。TODO：测试并使 [`torchao`](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) 工作
+- [`bitsandbytes`](https://huggingface.co/docs/bitsandbytes/optimizers) 中的低位优化器。
+  - TODO：测试并使 [`torchao`](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) 工作
 - DeepSpeed Zero2：由于我们依赖 `accelerate`，请按照[本指南](https://huggingface.co/docs/accelerate/en/usage_guides/deepspeed) 配置 `accelerate` 以启用 DeepSpeed Zero2 优化。
 
 > [!IMPORTANT]
@@ -114,6 +136,6 @@ TODO：添加一个关于创建和使用预计算嵌入的部分。
 > [!NOTE]
 > 图像到视频 LoRA 微调的内存需求与 `THUDM/CogVideoX-5b` 上的文本到视频类似，因此未明确报告。
 >
-> 此外，要为 I2V 微调准备测试图像，您可以通过修改脚本动态生成它们，或使用以下命令从您的训练数据中提取一些帧：
+> I2V训练会使用视频的第一帧进行微调。 要为 I2V 微调准备测试图像，您可以通过修改脚本动态生成它们，或使用以下命令从您的训练数据中提取一些帧：
 > `ffmpeg -i input.mp4 -frames:v 1 frame.png`，
 > 或提供一个有效且可访问的图像 URL。
