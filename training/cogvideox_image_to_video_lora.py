@@ -107,7 +107,7 @@ from diffusers import CogVideoXImageToVideoPipeline
 from diffusers.utils import export_to_video, load_image
 
 pipe = CogVideoXImageToVideoPipeline.from_pretrained("THUDM/CogVideoX-5b-I2V", torch_dtype=torch.bfloat16).to("cuda")
-pipe.load_lora_weights("{repo_id}", weight_name="pytorch_lora_weights.safetensors", adapter_name=["cogvideox-lora"])
+pipe.load_lora_weights("{repo_id}", weight_name="pytorch_lora_weights.safetensors", adapter_name="cogvideox-lora")
 
 # The LoRA adapter weights are determined by what was used for training.
 # In this case, we assume `--lora_alpha` is 32 and `--rank` is 64.
@@ -465,36 +465,25 @@ def main(args):
     )
 
     # Dataset and DataLoader
-    if not args.video_reshape_mode:
-        train_dataset = VideoDatasetWithResizing(
-            data_root=args.data_root,
-            dataset_file=args.dataset_file,
-            caption_column=args.caption_column,
-            video_column=args.video_column,
-            max_num_frames=args.max_num_frames,
-            id_token=args.id_token,
-            height_buckets=args.height_buckets,
-            width_buckets=args.width_buckets,
-            frame_buckets=args.frame_buckets,
-            load_tensors=args.load_tensors,
-            random_flip=args.random_flip,
-            image_to_video=True,
-        )
+    dataset_init_kwargs = {
+        "data_root": args.data_root,
+        "dataset_file": args.dataset_file,
+        "caption_column": args.caption_column,
+        "video_column": args.video_column,
+        "max_num_frames": args.max_num_frames,
+        "id_token": args.id_token,
+        "height_buckets": args.height_buckets,
+        "width_buckets": args.width_buckets,
+        "frame_buckets": args.frame_buckets,
+        "load_tensors": args.load_tensors,
+        "random_flip": args.random_flip,
+        "image_to_video": True,
+    }
+    if args.video_reshape_mode is None:
+        train_dataset = VideoDatasetWithResizing(**dataset_init_kwargs)
     else:
         train_dataset = VideoDatasetWithResizeAndRectangleCrop(
-            video_reshape_mode=args.video_reshape_mode,
-            data_root=args.data_root,
-            dataset_file=args.dataset_file,
-            caption_column=args.caption_column,
-            video_column=args.video_column,
-            max_num_frames=args.max_num_frames,
-            id_token=args.id_token,
-            height_buckets=args.height_buckets,
-            width_buckets=args.width_buckets,
-            frame_buckets=args.frame_buckets,
-            load_tensors=args.load_tensors,
-            random_flip=args.random_flip,
-            image_to_video=True,
+            video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
         )
 
     def collate_fn(data):

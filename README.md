@@ -2,11 +2,15 @@
 
 Fine-tune Cog family of video models for custom video generation under 24GB of GPU memory ⚡️📼
 
-TODO: Add table with fun video results
+<table align="center">
+<tr>
+  <td align="center"><video src="./assets/CogVideoX-LoRA.webm">Your browser does not support the video tag.</video></td>
+</tr>
+</table>
 
 ## Quickstart
 
-Make sure the requirements are installed: `pip install -r requirements.txt`. 
+Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt`.
 
 Then download a dataset:
 
@@ -17,33 +21,47 @@ huggingface-cli download \
   --local-dir video-dataset-disney
 ```
 
-Then launch LoRA fine-tuning for text-to-video:
+Then launch LoRA fine-tuning for text-to-video (modify the different hyperparameters, dataset root, and other configuration options as per your choice):
 
 ```bash
-TODO
+# For LoRA finetuning of the text-to-video CogVideoX models
+./train_text_to_video_lora.sh
+
+# For full finetuning of the text-to-video CogVideoX models
+./train_text_to_video_sft.sh
+
+# For LoRA finetuning of the image-to-video CogVideoX models
+./train_image_to_video_lora.sh
 ```
 
-We can now use the trained model for inference:
+Assuming your LoRA is saved and pushed to the HF Hub, and named `my-awesome-name/my-awesome-lora`, we can now use the finetuned model for inference:
 
-```python
-TODO
+```diff
+import torch
+from diffusers import CogVideoXPipeline
+from diffusers import export_to_video
+
+pipe = CogVideoXPipeline.from_pretrained(
+    "THUDM/CogVideoX-5b", torch_dtype=torch.bfloat16
+).to("cuda")
++ pipe.load_lora_weights("my-awesome-name/my-awesome-lora", adapter_name=["cogvideox-lora"])
++ pipe.set_adapters(["cogvideox-lora"], [1.0])
+
+video = pipe("<my-awesome-prompt>").frames[0]
+export_to_video(video, "output.mp4", fps=8)
 ```
 
-We can also fine-tune the 5B variant with LoRA:
+**Note:** For Image-to-Video finetuning, you must install diffusers from [this](https://github.com/huggingface/diffusers/pull/9482) branch (which adds lora loading support in CogVideoX image-to-video) until it is merged.
 
-```python
-TODO
-```
-
-Below we provide additional sections detailing on more options we provide in this repository. They all attempt to make fine-tuning for video models as accessible as possible. 
+Below we provide additional sections detailing on more options explored in this repository. They all attempt to make fine-tuning for video models as accessible as possible by reducing memory requirements as much as possible.
 
 ## Dataset Preparation
 
 Create two files where one file contains line-separated prompts and another file contains line-separated paths to video data (the path to video files must be relative to the path you pass when specifying `--data_root`). Let's take a look at an example to understand this better!
 
-Assume you've specified `--data_root` as `/dataset`, and that this directory contains the files: `prompts.txt` and `videos.txt`.
+Assume you've specified `--data_root` as `/dataset`, and that this directory contains the files: `prompt.txt` and `videos.txt`.
 
-The `prompts.txt` file should contain line-separated prompts:
+The `prompt.txt` file should contain line-separated prompts:
 
 ```
 A black and white animated sequence featuring a rabbit, named Rabbity Ribfried, and an anthropomorphic goat in a musical, playful environment, showcasing their evolving interaction.
@@ -63,7 +81,7 @@ Overall, this is how your dataset would look like if you ran the `tree` command 
 
 ```bash
 /dataset
-├── prompts.txt
+├── prompt.txt
 ├── videos.txt
 ├── videos
     ├── videos/00000.mp4
@@ -71,7 +89,7 @@ Overall, this is how your dataset would look like if you ran the `tree` command 
     ├── ...
 ```
 
-When using this format, the `--caption_column` must be `prompts.txt` and `--video_column` must be `videos.txt`. If you, instead, have your data stored in a CSV file, you can also specify `--dataset_file` as the path to CSV, the `--caption_column` and `--video_column` as the actual column names in the CSV file.
+When using this format, the `--caption_column` must be `prompt.txt` and `--video_column` must be `videos.txt`. If you have your data stored in a CSV file instead, you can also specify `--dataset_file` as the path to CSV, and the `--caption_column` and `--video_column` as the actual column names in the CSV file. The [test_dataset](./tests/test_dataset.py) file contains some easy-to-understand examples for both formats.
 
 As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disney-VideoGeneration-Dataset) Disney dataset for finetuning. To download, one can use the 🤗 Hugging Face CLI.
 
@@ -79,24 +97,132 @@ As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disne
 huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir video-dataset-disney
 ```
 
-TODO: Add a section on creating and using precomputed embeddings.
+This dataset is already prepared in the expected format and ready to use. However, using video datasets directly can lead to OOMs on smaller VRAM GPUs because it requires loading the [VAE](https://huggingface.co/THUDM/CogVideoX-5b/tree/main/vae) (to encode videos to latent space) and the massive [T5-XXL](https://huggingface.co/google/t5-v1_1-xxl/) text encoder. In order to lower these memory requirements, one can precompute the latents and embeddings using the `training/prepare_dataset.py` script.
+
+Fill in, or modify, the parameters in `prepare_dataset.sh` and execute it to obtain the precomputed latents and embeddings (make sure to specify `--save_tensors` to save precomputed artifacts). To use them during training, make sure to specify the `--load_tensors` flag, otherwise the videos will be used as-is and require loading the text encoder and VAE. The script also supports PyTorch DDP so that large datasets can be parallely encoded using multiple GPUs (modify the `NUM_GPUS` parameter).
 
 ## Training
 
-We provide training script for both text-to-video and image-to-video generation which are compatible with the [Cog family of models](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce).
+We provide training script for both text-to-video and image-to-video generation which are compatible with the [CogVideoX family of models](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce). Training can be launched with one of the `train*.sh` scripts based on the task you'd like to train. Let's take text-to-video LoRA finetuning as an example.
 
-Take a look at `*.sh`
+- Configure environment variables according as per your choice:
 
-Note: Untested on MPS
+  ```bash
+  export TORCH_LOGS="+dynamo,recompiles,graph_breaks"
+  export TORCHDYNAMO_VERBOSE=1
+  export WANDB_MODE="offline"
+  export NCCL_P2P_DISABLE=1
+  export TORCH_NCCL_ENABLE_MONITORING=0
+  ```
+
+- Configure which GPUs to use for training: `GPU_IDS="0,1"`
+
+- Choose hyperparamters for training. Let's try to do a sweep on learning rate and optimizer type as an example:
+
+  ```bash
+  LEARNING_RATES=("1e-4" "1e-3")
+  LR_SCHEDULES=("cosine_with_restarts")
+  OPTIMIZERS=("adamw", "adam")
+  MAX_TRAIN_STEPS=("3000")
+  ```
+
+- Select which Accelerate configuration you would like to train with: `ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_1.yaml"`. We provide some default configurations in the `accelerate_configs/` directory - single GPU uncompiled/compiled, 2x GPU DDP, DeepSpeed, etc. You can create your own config files with custom settings using `accelerate config --config_file my_config.yaml`.
+
+- Specify the absolute paths and columns/files for captions and videos.
+
+  ```bash
+  DATA_ROOT="/path/to/my/datasets/video-dataset-disney"
+  CAPTION_COLUMN="prompt.txt"
+  VIDEO_COLUMN="videos.txt"
+  ```
+
+- Launch experiments sweeping different hyperparameters:
+  ```
+  for learning_rate in "${LEARNING_RATES[@]}"; do
+    for lr_schedule in "${LR_SCHEDULES[@]}"; do
+      for optimizer in "${OPTIMIZERS[@]}"; do
+        for steps in "${MAX_TRAIN_STEPS[@]}"; do
+          output_dir="/path/to/my/models/cogvideox-lora__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
+
+          cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox_text_to_video_lora.py \
+            --pretrained_model_name_or_path THUDM/CogVideoX-5b \
+            --data_root $DATA_ROOT \
+            --caption_column $CAPTION_COLUMN \
+            --video_column $VIDEO_COLUMN \
+            --id_token BW_STYLE \
+            --height_buckets 480 \
+            --width_buckets 720 \
+            --frame_buckets 49 \
+            --dataloader_num_workers 8 \
+            --pin_memory \
+            --validation_prompt \"BW_STYLE A black and white animated scene unfolds with an anthropomorphic goat surrounded by musical notes and symbols, suggesting a playful environment. Mickey Mouse appears, leaning forward in curiosity as the goat remains still. The goat then engages with Mickey, who bends down to converse or react. The dynamics shift as Mickey grabs the goat, potentially in surprise or playfulness, amidst a minimalistic background. The scene captures the evolving relationship between the two characters in a whimsical, animated setting, emphasizing their interactions and emotions:::BW_STYLE A panda, dressed in a small, red jacket and a tiny hat, sits on a wooden stool in a serene bamboo forest. The panda's fluffy paws strum a miniature acoustic guitar, producing soft, melodic tunes. Nearby, a few other pandas gather, watching curiously and some clapping in rhythm. Sunlight filters through the tall bamboo, casting a gentle glow on the scene. The panda's face is expressive, showing concentration and joy as it plays. The background includes a small, flowing stream and vibrant green foliage, enhancing the peaceful and magical atmosphere of this unique musical performance\" \
+            --validation_prompt_separator ::: \
+            --num_validation_videos 1 \
+            --validation_epochs 10 \
+            --seed 42 \
+            --rank 128 \
+            --lora_alpha 128 \
+            --mixed_precision bf16 \
+            --output_dir $output_dir \
+            --max_num_frames 49 \
+            --train_batch_size 1 \
+            --max_train_steps $steps \
+            --checkpointing_steps 1000 \
+            --gradient_accumulation_steps 1 \
+            --gradient_checkpointing \
+            --learning_rate $learning_rate \
+            --lr_scheduler $lr_schedule \
+            --lr_warmup_steps 400 \
+            --lr_num_cycles 1 \
+            --enable_slicing \
+            --enable_tiling \
+            --optimizer $optimizer \
+            --beta1 0.9 \
+            --beta2 0.95 \
+            --weight_decay 0.001 \
+            --max_grad_norm 1.0 \
+            --allow_tf32 \
+            --report_to wandb \
+            --nccl_timeout 1800"
+          
+          echo "Running command: $cmd"
+          eval $cmd
+          echo -ne "-------------------- Finished executing script --------------------\n\n"
+        done
+      done
+    done
+  done
+  ```
+
+  To understand what the different parameters mean, you could either take a look at the [args](./training/args.py) file or run the training script with `--help`.
+
+Note: Training scripts are untested on MPS, so performance and memory requirements can differ widely compared to the CUDA reports below.
 
 ## Memory requirements
 
 <table align="center">
 <tr>
-  <td align="center"><a href="https://www.youtube.com/watch?v=UvRl4ansfCg"> Slaying OOMs with PyTorch</a></td>
+  <td align="center" colspan="2"><b>CogVideoX LoRA Finetuning</b></td>
 </tr>
 <tr>
-  <td align="center"><img src="assets/slaying-ooms.png" style="width: 480px; height: 480px;"></td>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-2b">THUDM/CogVideoX-2b</a></td>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-5b">THUDM/CogVideoX-5b</a></td>
+</tr>
+<tr>
+  <td align="center"><img src="assets/lora_2b.png" /></td>
+  <td align="center"><img src="assets/lora_5b.png" /></td>
+</tr>
+
+<tr>
+  <td align="center" colspan="2"><b>CogVideoX Full Finetuning</b></td>
+</tr>
+<tr>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-2b">THUDM/CogVideoX-2b</a></td>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-5b">THUDM/CogVideoX-5b</a></td>
+</tr>
+<tr>
+  <td align="center"><img src="assets/sft_2b.png" /></td>
+  <td align="center"><img src="assets/sft_5b.png" /></td>
 </tr>
 </table>
 
@@ -123,6 +249,8 @@ Supported and verified memory optimizations for training include:
 <details>
 <summary> AdamW </summary>
 
+**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+
 With `train_batch_size = 1`:
 
 |       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
@@ -148,13 +276,12 @@ With `train_batch_size = 4`:
 | THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          47.805          |         47.805          |       39.365         |
 | THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.268          |         47.332          |       41.008         |
 
-> [!NOTE]
-> Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
-
 </details>
 
 <details>
 <summary> AdamW (8-bit bitsandbytes) </summary>
+
+**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
 
 With `train_batch_size = 1`:
 
@@ -184,45 +311,9 @@ With `train_batch_size = 4`:
 </details>
 
 <details>
-<summary> AdamW (8-bit torchao) </summary>
-
-Currently, errors out with following stack-trace:
-
-```python
-Traceback (most recent call last):               
-  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 915, in <module>                                                                                         
-    main(args)                                   
-  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 719, in main                                                                                             
-    optimizer.step()                                                                              
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/accelerate/optimizer.py", line 159, in step                                                                                           
-    self.scaler.step(self.optimizer, closure)    
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/amp/grad_scaler.py", line 457, in step                                                                                          
-    retval = self._maybe_opt_step(optimizer, optimizer_state, *args, **kwargs)                    
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/amp/grad_scaler.py", line 352, in _maybe_opt_step                                                                               
-    retval = optimizer.step(*args, **kwargs)     
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/accelerate/optimizer.py", line 214, in patched_step                                                                                   
-    return method(*args, **kwargs)               
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/optim/lr_scheduler.py", line 137, in wrapper                                                                                    
-    return func.__get__(opt, opt.__class__)(*args, **kwargs)                                      
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/optim/optimizer.py", line 487, in wrapper                                                                                       
-    out = func(*args, **kwargs)                  
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
-    return func(*args, **kwargs)                 
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torchao/prototype/low_bit_optim/adam.py", line 87, in step                                                                            
-    raise RuntimeError(                          
-RuntimeError: lr was changed to a non-Tensor object. If you want to update lr, please use optim.param_groups[0]['lr'].fill_(new_lr)
-```
-</details>
-
-<details>
-<summary> AdamW (4-bit torchao) </summary>
-
-Same error as AdamW (8-bit torchao)
-
-</details>
-
-<details>
 <summary> AdamW + CPUOffloadOptimizer (with gradient offloading) </summary>
+
+**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
 
 With `train_batch_size = 1`:
 
@@ -249,53 +340,12 @@ With `train_batch_size = 4`:
 | THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          46.561          |         46.574          |       38.840         |
 | THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.268          |         47.332          |       39.623         |
 
-> [!NOTE]
-> Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
-
-</details>
-
-<details>
-<summary> AdamW (8-bit bitsandbytes) + CPUOffloadOptimizer (with gradient offloading) </summary>
-
-Currently, errors out with the following stack-trace:
-
-```python
-  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 925, in <module>                                                                                         
-    main(args)                                                                                                                                                                                      
-  File "/raid/aryan/cogvideox-distillation/training/cogvideox_text_to_video_lora.py", line 727, in main                                                                                             
-    optimizer.step()                                                                                                                                                                                
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
-    return func(*args, **kwargs)                                                                                                                                                                    
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torchao/prototype/low_bit_optim/cpu_offload.py", line 87, in step                                                                     
-    self.optim_dict[p_cuda].step()                                                                                                                                                                  
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/optim/optimizer.py", line 487, in wrapper                                                                                       
-    out = func(*args, **kwargs)                                                                                                                                                                     
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
-    return func(*args, **kwargs)                                                                                                                                                                    
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/optim/optimizer.py", line 287, in step                                                                                   
-    self.update_step(group, p, gindex, pindex)                                                                                                                                                      
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context                                                                            
-    return func(*args, **kwargs)                                                                                                                                                                    
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/optim/optimizer.py", line 546, in update_step                                                                            
-    F.optimizer_update_8bit_blockwise(                                                                                                                                                              
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/functional.py", line 1774, in optimizer_update_8bit_blockwise                                                            
-    prev_device = pre_call(g.device)                                                                                                                                                                
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/bitsandbytes/functional.py", line 463, in pre_call                                                                                    
-    torch.cuda.set_device(device)                                                                                                                                                                   
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/cuda/__init__.py", line 476, in set_device                                                                                      
-    device = _get_device_index(device)           
-  File "/raid/aryan/nightly-venv/lib/python3.10/site-packages/torch/cuda/_utils.py", line 34, in _get_device_index                                                                                  
-    raise ValueError(f"Expected a cuda device, but got: {device}")                                
-ValueError: Expected a cuda device, but got: cpu
-```
-
 </details>
 
 <details>
 <summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
 
-> [!NOTE]
-> Results are for `lora_rank=256` with `gradient_checkpointing` enabled, 2x RTX 4090.
+**Note:** Results are reported with `gradient_checkpointing` enabled, running on a 2x A100.
 
 With `train_batch_size = 1`:
 
@@ -385,8 +435,7 @@ With `train_batch_size = 4`:
 <details>
 <summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
 
-> [!NOTE]
-> Results with `gradient_checkpointing` enabled, 2x RTX 4090.
+**Note:** Results are reported with `gradient_checkpointing` enabled, running on a 2x A100.
 
 With `train_batch_size = 1`:
 
@@ -405,15 +454,33 @@ With `train_batch_size = 4`:
 </details>
 
 > [!NOTE]
-> `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
+> - `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
+>
+> - `memory_before_validation` is the true indicator of the peak memory required for training if you choose to not perform validation/testing.
+
+<table align="center">
+<tr>
+  <td align="center"><a href="https://www.youtube.com/watch?v=UvRl4ansfCg"> Slaying OOMs with PyTorch</a></td>
+</tr>
+<tr>
+  <td align="center"><img src="assets/slaying-ooms.png" style="width: 480px; height: 480px;"></td>
+</tr>
+</table>
+
+## TODOs
 
 - [x] Make scripts compatible with DDP
 - [ ] Make scripts compatible with FSDP
 - [x] Make scripts compatible with DeepSpeed
+- [ ] vLLM-powered captioning script
+- [ ] Multi-resolution/frame support in `prepare_dataset.py`
+- [ ] Analyzing traces for potential speedups and removing as many syncs as possible
+- [ ] Support for QLoRA (priority), and other types of high usage LoRAs methods
 - [x] Test scripts with memory-efficient optimizer from bitsandbytes
 - [x] Test scripts with CPUOffloadOptimizer, etc.
-- [ ] Test scripts with torchao quantization, and low bit memory optimizers, etc.
-- [x] Make 5B lora finetuning work in under 24GB
+- [ ] Test scripts with torchao quantization, and low bit memory optimizers (Currently errors with AdamW (8/4-bit torchao))
+- [ ] Test scripts with AdamW (8-bit bitsandbytes) + CPUOffloadOptimizer (with gradient offloading) (Currently errors out)
+- [ ] [Sage Attention](https://github.com/thu-ml/SageAttention) (work with the authors to support backward pass, and optimize for A100)
 
 > [!IMPORTANT]
 > Since our goal is to make the scripts as memory-friendly as possible we don't guarantee multi-GPU training.
