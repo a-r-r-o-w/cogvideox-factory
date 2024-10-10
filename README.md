@@ -2,32 +2,6 @@
 
 Fine-tune Cog family of video models for custom video generation under 24GB of GPU memory ⚡️📼
 
-<table align="center">
-<tr>
-  <td align="center" colspan="2"><b>CogVideoX LoRA Finetuning</b></td>
-</tr>
-<tr>
-  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-2b">THUDM/CogVideoX-2b</a></td>
-  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-5b">THUDM/CogVideoX-5b</a></td>
-</tr>
-<tr>
-  <td align="center"><img src="assets/lora_2b.png" /></td>
-  <td align="center"><img src="assets/lora_5b.png" /></td>
-</tr>
-
-<tr>
-  <td align="center" colspan="2"><b>CogVideoX Full Finetuning</b></td>
-</tr>
-<tr>
-  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-2b">THUDM/CogVideoX-2b</a></td>
-  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-5b">THUDM/CogVideoX-5b</a></td>
-</tr>
-<tr>
-  <td align="center"><img src="assets/sft_2b.png" /></td>
-  <td align="center"><img src="assets/sft_5b.png" /></td>
-</tr>
-</table>
-
 ## Quickstart
 
 Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt`.
@@ -224,10 +198,27 @@ Note: Training scripts are untested on MPS, so performance and memory requiremen
 
 <table align="center">
 <tr>
-  <td align="center"><a href="https://www.youtube.com/watch?v=UvRl4ansfCg"> Slaying OOMs with PyTorch</a></td>
+  <td align="center" colspan="2"><b>CogVideoX LoRA Finetuning</b></td>
 </tr>
 <tr>
-  <td align="center"><img src="assets/slaying-ooms.png" style="width: 480px; height: 480px;"></td>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-2b">THUDM/CogVideoX-2b</a></td>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-5b">THUDM/CogVideoX-5b</a></td>
+</tr>
+<tr>
+  <td align="center"><img src="assets/lora_2b.png" /></td>
+  <td align="center"><img src="assets/lora_5b.png" /></td>
+</tr>
+
+<tr>
+  <td align="center" colspan="2"><b>CogVideoX Full Finetuning</b></td>
+</tr>
+<tr>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-2b">THUDM/CogVideoX-2b</a></td>
+  <td align="center"><a href="https://huggingface.co/THUDM/CogVideoX-5b">THUDM/CogVideoX-5b</a></td>
+</tr>
+<tr>
+  <td align="center"><img src="assets/sft_2b.png" /></td>
+  <td align="center"><img src="assets/sft_5b.png" /></td>
 </tr>
 </table>
 
@@ -254,6 +245,8 @@ Supported and verified memory optimizations for training include:
 <details>
 <summary> AdamW </summary>
 
+**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+
 With `train_batch_size = 1`:
 
 |       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
@@ -279,13 +272,12 @@ With `train_batch_size = 4`:
 | THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          47.805          |         47.805          |       39.365         |
 | THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.268          |         47.332          |       41.008         |
 
-> [!NOTE]
-> Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
-
 </details>
 
 <details>
 <summary> AdamW (8-bit bitsandbytes) </summary>
+
+**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
 
 With `train_batch_size = 1`:
 
@@ -317,6 +309,8 @@ With `train_batch_size = 4`:
 <details>
 <summary> AdamW + CPUOffloadOptimizer (with gradient offloading) </summary>
 
+**Note:** Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
+
 With `train_batch_size = 1`:
 
 |       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
@@ -342,16 +336,12 @@ With `train_batch_size = 4`:
 | THUDM/CogVideoX-5b |    64     |          True          |         20.006         |          46.561          |         46.574          |       38.840         |
 | THUDM/CogVideoX-5b |    256    |          True          |         20.771         |          47.268          |         47.332          |       39.623         |
 
-> [!NOTE]
-> Trying to run CogVideoX-5b without gradient checkpointing OOMs even on an A100 (80 GB), so the memory measurements have not been specified.
-
 </details>
 
 <details>
 <summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
 
-> [!NOTE]
-> Results are for `lora_rank=256` with `gradient_checkpointing` enabled, 2x RTX 4090.
+**Note:** Results are reported with `gradient_checkpointing` enabled, running on a 2x A100.
 
 With `train_batch_size = 1`:
 
@@ -441,8 +431,7 @@ With `train_batch_size = 4`:
 <details>
 <summary> DeepSpeed (AdamW + CPU/Parameter offloading) </summary>
 
-> [!NOTE]
-> Results with `gradient_checkpointing` enabled, 2x RTX 4090.
+**Note:** Results are reported with `gradient_checkpointing` enabled, running on a 2x A100.
 
 With `train_batch_size = 1`:
 
@@ -464,6 +453,15 @@ With `train_batch_size = 4`:
 > - `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
 >
 > - `memory_before_validation` is the true indicator of the peak memory required for training if you choose to not perform validation/testing.
+
+<table align="center">
+<tr>
+  <td align="center"><a href="https://www.youtube.com/watch?v=UvRl4ansfCg"> Slaying OOMs with PyTorch</a></td>
+</tr>
+<tr>
+  <td align="center"><img src="assets/slaying-ooms.png" style="width: 480px; height: 480px;"></td>
+</tr>
+</table>
 
 ## TODOs
 
