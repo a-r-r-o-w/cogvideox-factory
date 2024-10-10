@@ -53,9 +53,9 @@ Below we provide additional sections detailing on more options explored in this 
 
 Create two files where one file contains line-separated prompts and another file contains line-separated paths to video data (the path to video files must be relative to the path you pass when specifying `--data_root`). Let's take a look at an example to understand this better!
 
-Assume you've specified `--data_root` as `/dataset`, and that this directory contains the files: `prompts.txt` and `videos.txt`.
+Assume you've specified `--data_root` as `/dataset`, and that this directory contains the files: `prompt.txt` and `videos.txt`.
 
-The `prompts.txt` file should contain line-separated prompts:
+The `prompt.txt` file should contain line-separated prompts:
 
 ```
 A black and white animated sequence featuring a rabbit, named Rabbity Ribfried, and an anthropomorphic goat in a musical, playful environment, showcasing their evolving interaction.
@@ -75,7 +75,7 @@ Overall, this is how your dataset would look like if you ran the `tree` command 
 
 ```bash
 /dataset
-├── prompts.txt
+├── prompt.txt
 ├── videos.txt
 ├── videos
     ├── videos/00000.mp4
@@ -83,7 +83,7 @@ Overall, this is how your dataset would look like if you ran the `tree` command 
     ├── ...
 ```
 
-When using this format, the `--caption_column` must be `prompts.txt` and `--video_column` must be `videos.txt`. If you have your data stored in a CSV file instead, you can also specify `--dataset_file` as the path to CSV, and the `--caption_column` and `--video_column` as the actual column names in the CSV file.
+When using this format, the `--caption_column` must be `prompt.txt` and `--video_column` must be `videos.txt`. If you have your data stored in a CSV file instead, you can also specify `--dataset_file` as the path to CSV, and the `--caption_column` and `--video_column` as the actual column names in the CSV file.
 
 As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disney-VideoGeneration-Dataset) Disney dataset for finetuning. To download, one can use the 🤗 Hugging Face CLI.
 
@@ -94,8 +94,6 @@ huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-D
 This dataset is already prepared in the expected format and ready to use. However, using video datasets directly can lead to OOMs on smaller VRAM GPUs because it requires loading the [VAE](https://huggingface.co/THUDM/CogVideoX-5b/tree/main/vae) (to encode videos to latent space) and the massive [T5-XXL](https://huggingface.co/google/t5-v1_1-xxl/) text encoder. In order to lower these memory requirements, one can precompute the latents and embeddings using the `training/prepare_dataset.py` script.
 
 Fill in, or modify, the parameters in `prepare_dataset.sh` and execute it to obtain the precomputed latents and embeddings. The script also supports PyTorch DDP so that large datasets can be parallely encoded using multiple GPUs (modify the `NUM_GPUS` parameter).
-
-TODO: Add support for multi-resolution/frame in the `training/prepare_dataset.py` script.
 
 ## Training
 
@@ -128,7 +126,7 @@ We provide training script for both text-to-video and image-to-video generation 
 
   ```bash
   DATA_ROOT="/path/to/my/datasets/video-dataset-disney"
-  CAPTION_COLUMN="prompts.txt"
+  CAPTION_COLUMN="prompt.txt"
   VIDEO_COLUMN="videos.txt"
   ```
 

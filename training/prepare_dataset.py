@@ -348,7 +348,7 @@ def save_videos(
         for video_path in video_paths:
             file.write(f"videos/{video_path.name}\n")
 
-    with open(output_dir.joinpath("prompts.txt").as_posix(), "a", encoding="utf-8") as file:
+    with open(output_dir.joinpath("prompt.txt").as_posix(), "a", encoding="utf-8") as file:
         for prompt in prompts:
             file.write(f"{prompt}\n")
 
@@ -398,7 +398,7 @@ def save_latents_and_embeddings(
         for video_path in video_paths:
             file.write(f"videos/{video_path.name}\n")
 
-    with open(output_dir.joinpath("prompts.txt").as_posix(), "a", encoding="utf-8") as file:
+    with open(output_dir.joinpath("prompt.txt").as_posix(), "a", encoding="utf-8") as file:
         for prompt in prompts:
             file.write(f"{prompt}\n")
 

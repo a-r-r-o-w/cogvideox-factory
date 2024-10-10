@@ -6,7 +6,7 @@ NUM_GPUS=8
 
 # For more details on the expected data format, please refer to the README.
 DATA_ROOT="/path/to/my/datasets/video-dataset"  # This needs to be the path to the base directory where your videos are located.
-CAPTION_COLUMN="prompts.txt"
+CAPTION_COLUMN="prompt.txt"
 VIDEO_COLUMN="videos.txt"
 OUTPUT_DIR="/path/to/my/datasets/preprocessed-dataset"
 HEIGHT=480
