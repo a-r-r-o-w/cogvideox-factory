@@ -119,7 +119,7 @@ We provide training script for both text-to-video and image-to-video generation 
 
 - Configure which GPUs to use for training: `GPU_IDS="0,1"`
 
-- Choose hyperparamters for training. Let's try to do a sweep on learning rate and optimizer type as an example:
+- Choose hyperparameters for training. Let's try to do a sweep on learning rate and optimizer type as an example:
 
   ```bash
   LEARNING_RATES=("1e-4" "1e-3")
