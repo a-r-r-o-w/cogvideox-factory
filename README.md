@@ -244,8 +244,8 @@ finetuning as an example.
   To understand what the different parameters mean, you could either take a look at the [args](./training/args.py) file
   or run the training script with `--help`.
 
-Note: Training scripts are untested on MPS, so performance and memory requirements can differ widely compared to the
-CUDA reports below.
+> [!NOTE]  
+> Training scripts are untested on MPS, so performance and memory requirements can differ widely compared to the CUDA reports below.
 
 ## Memory requirements
 
