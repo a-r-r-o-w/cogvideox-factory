@@ -57,55 +57,9 @@ export_to_video(video, "output.mp4", fps=8)
 
 Below we provide additional sections detailing on more options explored in this repository. They all attempt to make fine-tuning for video models as accessible as possible by reducing memory requirements as much as possible.
 
-## Dataset Preparation
+## Prepare Dataset and Training
 
-Create two files where one file contains line-separated prompts and another file contains line-separated paths to video data (the path to video files must be relative to the path you pass when specifying `--data_root`). Let's take a look at an example to understand this better!
-
-Assume you've specified `--data_root` as `/dataset`, and that this directory contains the files: `prompt.txt` and `videos.txt`.
-
-The `prompt.txt` file should contain line-separated prompts:
-
-```
-A black and white animated sequence featuring a rabbit, named Rabbity Ribfried, and an anthropomorphic goat in a musical, playful environment, showcasing their evolving interaction.
-A black and white animated sequence on a ship's deck features a bulldog character, named Bully Bulldoger, showcasing exaggerated facial expressions and body language. The character progresses from confident to focused, then to strained and distressed, displaying a range of emotions as it navigates challenges. The ship's interior remains static in the background, with minimalistic details such as a bell and open door. The character's dynamic movements and changing expressions drive the narrative, with no camera movement to distract from its evolving reactions and physical gestures.
-...
-```
-
-The `videos.txt` file should contain line-separate paths to video files. Note that the path should be _relative_ to the `--data_root` directory.
-
-```bash
-videos/00000.mp4
-videos/00001.mp4
-...
-```
-
-Overall, this is how your dataset would look like if you ran the `tree` command on the dataset root directory:
-
-```bash
-/dataset
-├── prompt.txt
-├── videos.txt
-├── videos
-    ├── videos/00000.mp4
-    ├── videos/00001.mp4
-    ├── ...
-```
-
-When using this format, the `--caption_column` must be `prompt.txt` and `--video_column` must be `videos.txt`. If you have your data stored in a CSV file instead, you can also specify `--dataset_file` as the path to CSV, and the `--caption_column` and `--video_column` as the actual column names in the CSV file. The [test_dataset](./tests/test_dataset.py) file contains some easy-to-understand examples for both formats.
-
-As an example, let's use [this](https://huggingface.co/datasets/Wild-Heart/Disney-VideoGeneration-Dataset) Disney dataset for finetuning. To download, one can use the 🤗 Hugging Face CLI.
-
-```bash
-huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir video-dataset-disney
-```
-
-This dataset is already prepared in the expected format and ready to use. However, using video datasets directly can lead to OOMs on smaller VRAM GPUs because it requires loading the [VAE](https://huggingface.co/THUDM/CogVideoX-5b/tree/main/vae) (to encode videos to latent space) and the massive [T5-XXL](https://huggingface.co/google/t5-v1_1-xxl/) text encoder. In order to lower these memory requirements, one can precompute the latents and embeddings using the `training/prepare_dataset.py` script.
-
-Fill in, or modify, the parameters in `prepare_dataset.sh` and execute it to obtain the precomputed latents and embeddings (make sure to specify `--save_tensors` to save precomputed artifacts). To use them during training, make sure to specify the `--load_tensors` flag, otherwise the videos will be used as-is and require loading the text encoder and VAE. The script also supports PyTorch DDP so that large datasets can be parallely encoded using multiple GPUs (modify the `NUM_GPUS` parameter).
-
-## Training
-
-We provide training script for both text-to-video and image-to-video generation which are compatible with the [CogVideoX family of models](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce). Training can be launched with one of the `train*.sh` scripts based on the task you'd like to train. Let's take text-to-video LoRA finetuning as an example.
+Before starting the training, please check whether the dataset has been prepared according to the [dataset specifications](assets/dataset.md). We provide training scripts suitable for text-to-video and image-to-video generation, compatible with the [CogVideoX model family](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce). Training can be started using the `train*.sh` scripts, depending on the task you want to train. Let's take LoRA fine-tuning for text-to-video as an example.
 
 - Configure environment variables according as per your choice:
 
