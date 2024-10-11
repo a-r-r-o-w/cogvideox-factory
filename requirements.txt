@@ -1,7 +1,7 @@
 accelerate>=1.0.0
 bitsandbytes>=0.44.1
 diffusers>=0.30.4
-transformers>=0.45.2
+transformers>=4.45.2
 huggingface_hub>=0.25.2
 hf_transfer>=0.1.8
 peft>=0.13.1
