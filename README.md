@@ -60,7 +60,6 @@ Below we provide additional sections detailing on more options explored in this 
 ## Prepare Dataset and Training
 
 Before starting the training, please check whether the dataset has been prepared according to the [dataset specifications](assets/dataset.md). We provide training scripts suitable for text-to-video and image-to-video generation, compatible with the [CogVideoX model family](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce). Training can be started using the `train*.sh` scripts, depending on the task you want to train. Let's take LoRA fine-tuning for text-to-video as an example.
-We provide training script for both text-to-video and image-to-video generation which are compatible with the [CogVideoX family of models](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce). Training can be launched with one of the `train*.sh` scripts based on the task you'd like to train. Let's take text-to-video LoRA finetuning as an example.
 
 - Configure environment variables according as per your choice:
 
