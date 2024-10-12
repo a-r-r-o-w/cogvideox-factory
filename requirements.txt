@@ -1,5 +1,5 @@
-accelerate>=0.34.2
-bitsandbytes>=0.43.3
+accelerate
+bitsandbytes
 diffusers>=0.30.3
 transformers>=4.45.2
 huggingface_hub>=0.24.6
