@@ -284,6 +284,11 @@ def main(args):
         variant=args.variant,
     )
 
+    if args.ignore_learned_positional_embeddings:
+        del transformer.patch_embed.pos_embedding
+        transformer.patch_embed.use_learned_positional_embeddings = False
+        transformer.config.use_learned_positional_embeddings = False
+
     vae = AutoencoderKLCogVideoX.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="vae",
@@ -641,6 +646,7 @@ def main(args):
 
                 # Encode videos
                 if not args.load_tensors:
+                    images = images.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                     image_noise_sigma = torch.normal(
                         mean=-3.0, std=0.5, size=(images.size(0),), device=accelerator.device, dtype=weight_dtype
                     )
@@ -797,7 +803,11 @@ def main(args):
                 break
 
         if accelerator.is_main_process:
-            if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
+            should_run_validation = args.validation_prompt is not None and (
+                (args.validation_epochs is not None and (epoch + 1) % args.validation_epochs == 0)
+                or (args.validation_steps is not None and global_step % args.validation_step == 0)
+            )
+            if should_run_validation:
                 accelerator.print("===== Memory before validation =====")
                 print_memory(accelerator.device)
                 torch.cuda.synchronize(accelerator.device)
