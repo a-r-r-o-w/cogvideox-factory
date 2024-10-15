@@ -647,7 +647,6 @@ def main(args):
 
                 # Encode videos
                 if not args.load_tensors:
-                    images = images.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                     image_noise_sigma = torch.normal(
                         mean=-3.0, std=0.5, size=(images.size(0),), device=accelerator.device, dtype=weight_dtype
                     )
