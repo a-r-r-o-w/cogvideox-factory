@@ -200,6 +200,28 @@ def log_validation(
 
     return videos
 
+class CollateFunction:
+    def __init__(self, weight_dtype, load_tensors):
+        self.weight_dtype = weight_dtype
+        self.load_tensors = load_tensors
+
+    def __call__(self, data):
+        prompts = [x["prompt"] for x in data[0]]
+
+        if self.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
+
+        images = [x["image"] for x in data[0]]
+        images = torch.stack(images).to(dtype=self.weight_dtype, non_blocking=True)
+
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
+
+        return {
+            "images": images,
+            "videos": videos,
+            "prompts": prompts,
+        }
 
 def main(args):
     if args.report_to == "wandb" and args.hub_token is not None:
@@ -486,29 +508,13 @@ def main(args):
             video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
         )
 
-    def collate_fn(data):
-        prompts = [x["prompt"] for x in data[0]]
-
-        if args.load_tensors:
-            prompts = torch.stack(prompts).to(dtype=weight_dtype, non_blocking=True)
-
-        images = [x["image"] for x in data[0]]
-        images = torch.stack(images).to(dtype=weight_dtype, non_blocking=True)
-
-        videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(dtype=weight_dtype, non_blocking=True)
-
-        return {
-            "images": images,
-            "videos": videos,
-            "prompts": prompts,
-        }
+    collate_fn_instance = CollateFunction(weight_dtype, args.load_tensors)
 
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=1,
         sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
-        collate_fn=collate_fn,
+        collate_fn=collate_fn_instance,
         num_workers=args.dataloader_num_workers,
         pin_memory=args.pin_memory,
     )
@@ -641,6 +647,7 @@ def main(args):
 
                 # Encode videos
                 if not args.load_tensors:
+                    images = images.permute(0, 2, 1, 3, 4) # [B, C, F, H, W]
                     image_noise_sigma = torch.normal(
                         mean=-3.0, std=0.5, size=(images.size(0),), device=accelerator.device, dtype=weight_dtype
                     )
