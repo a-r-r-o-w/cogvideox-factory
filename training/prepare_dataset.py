@@ -370,27 +370,31 @@ def save_latents_and_embeddings(
     else:
         image_latents = [None] * latents.size(0)
 
-    image_latents_dir = output_dir.joinpath("image_latents")
+    
     latents_dir = output_dir.joinpath("latents")
     embeds_dir = output_dir.joinpath("embeddings")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    image_latents_dir.mkdir(parents=True, exist_ok=True)
     latents_dir.mkdir(parents=True, exist_ok=True)
     embeds_dir.mkdir(parents=True, exist_ok=True)
 
+    if save_image_latents:
+        image_latents_dir = output_dir.joinpath("image_latents")
+        image_latents_dir.mkdir(parents=True, exist_ok=True)
+
     for image_latent, latent, embed, video_path in zip(image_latents, latents, prompt_embeds, video_paths):
-        image_latent = image_latent.clone()
+        if image_latent is not None:
+            image_latent = image_latent.clone()
         latent = latent.clone()
         embed = embed.clone()
 
         filename_without_ext = video_path.stem
-
-        image_latent_filename = image_latents_dir.joinpath(f"{filename_without_ext}.pt")
         latent_filename = latents_dir.joinpath(f"{filename_without_ext}.pt")
         embed_filename = embeds_dir.joinpath(f"{filename_without_ext}.pt")
 
-        torch.save(image_latent, image_latent_filename)
+        if image_latent is not None:
+            image_latent_filename = image_latents_dir.joinpath(f"{filename_without_ext}.pt")
+            torch.save(image_latent, image_latent_filename)
         torch.save(latent, latent_filename)
         torch.save(embed, embed_filename)
 
