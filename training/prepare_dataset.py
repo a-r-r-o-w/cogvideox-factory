@@ -293,10 +293,15 @@ def serialize_artifacts(
     prompts: Optional[List[str]] = None,
     prompt_embeds: Optional[torch.Tensor] = None,
 ) -> None:
+    if images is not None:
+        images = (images.permute(0, 2, 1, 3, 4) + 1) / 2
+    if videos is not None:
+        videos = (videos.permute(0, 2, 1, 3, 4) + 1) / 2
+
     data_folder_mapper_list = [
-        (images.permute(0, 2, 1, 3, 4), images_dir, lambda img, path: save_image(img[0], path), "png"),
+        (images, images_dir, lambda img, path: save_image(img[0], path), "png"),
         (image_latents, image_latents_dir, torch.save, "pt"),
-        (videos.permute(0, 2, 1, 3, 4), videos_dir, functools.partial(save_video, fps=fps), "mp4"),
+        (videos, videos_dir, functools.partial(save_video, fps=fps), "mp4"),
         (video_latents, video_latents_dir, torch.save, "pt"),
         (prompts, prompts_dir, save_prompt, "txt"),
         (prompt_embeds, prompt_embeds_dir, torch.save, "pt"),
