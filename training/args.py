@@ -131,7 +131,13 @@ def _get_validation_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--validation_epochs",
         type=int,
-        default=50,
+        default=None,
+        help="Run validation every X training epochs. Validation consists of running the validation prompt `args.num_validation_videos` times.",
+    )
+    parser.add_argument(
+        "--validation_steps",
+        type=int,
+        default=None,
         help="Run validation every X training steps. Validation consists of running the validation prompt `args.num_validation_videos` times.",
     )
     parser.add_argument(
@@ -322,6 +328,16 @@ def _get_training_args(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=0.05,
         help="Image condition dropout probability when finetuning image-to-video.",
+    )
+    parser.add_argument(
+        "--ignore_learned_positional_embeddings",
+        action="store_true",
+        default=False,
+        help=(
+            "Whether to ignore the learned positional embeddings when training CogVideoX Image-to-Video. This setting "
+            "should be used when performing multi-resolution training, because CogVideoX-I2V does not support it "
+            "otherwise. Please read the comments in https://github.com/a-r-r-o-w/cogvideox-factory/issues/26 to understand why."
+        ),
     )
 
 
