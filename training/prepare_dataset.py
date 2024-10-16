@@ -6,27 +6,21 @@ import json
 import os
 import pathlib
 import queue
-import random
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
-import numpy as np
-import pandas as pd
 import torch
 import torch.distributed as dist
-import torchvision.transforms as TT
 from diffusers import AutoencoderKLCogVideoX
-from diffusers.utils import export_to_video, get_logger
 from diffusers.training_utils import set_seed
+from diffusers.utils import export_to_video, get_logger
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchvision.transforms import InterpolationMode
-from torchvision.transforms.functional import resize
 from tqdm import tqdm
 from transformers import T5EncoderModel, T5Tokenizer
-from PIL import Image
+
 
 import decord  # isort:skip
 
@@ -163,7 +157,9 @@ def get_args() -> Dict[str, Any]:
         help="Data type to use when generating latents and prompt embeddings.",
     )
     parser.add_argument("--seed", type=int, default=42, help="Seed for reproducibility.")
-    parser.add_argument("--num_artifact_workers", type=int, default=4, help="Number of worker threads for serializing artifacts.")
+    parser.add_argument(
+        "--num_artifact_workers", type=int, default=4, help="Number of worker threads for serializing artifacts."
+    )
     return parser.parse_args()
 
 
@@ -264,13 +260,16 @@ def compute_prompt_embeddings(
 
 to_pil_image = transforms.ToPILImage(mode="RGB")
 
+
 def save_image(image: torch.Tensor, path: pathlib.Path) -> None:
     image = to_pil_image(image)
     image.save(path)
 
+
 def save_video(video: torch.Tensor, path: pathlib.Path, fps: int = 8) -> None:
     video = [to_pil_image(frame) for frame in video]
     export_to_video(video, path, fps=fps)
+
 
 def save_prompt(prompt: str, path: pathlib.Path) -> None:
     with open(path, "w", encoding="utf=8") as file:
@@ -321,7 +320,7 @@ def save_intermediates(output_queue: queue.Queue) -> None:
             if item is None:
                 break
             serialize_artifacts(**item)
-        
+
         except queue.Empty:
             continue
 
@@ -355,7 +354,7 @@ def main():
         world_size = 1
         rank = 0
         torch.cuda.set_device(rank)
-    
+
     # Create folders where intermediate tensors from each rank will be saved
     images_dir = tmp_dir.joinpath(f"images/{rank}")
     image_latents_dir = tmp_dir.joinpath(f"image_latents/{rank}")
@@ -370,10 +369,10 @@ def main():
     video_latents_dir.mkdir(parents=True, exist_ok=True)
     prompts_dir.mkdir(parents=True, exist_ok=True)
     prompt_embeds_dir.mkdir(parents=True, exist_ok=True)
-    
+
     weight_dtype = DTYPE_MAPPING[args.dtype]
     target_fps = args.target_fps
-    
+
     # 1. Dataset
     dataset_init_kwargs = {
         "data_root": args.data_root,
@@ -395,9 +394,9 @@ def main():
         dataset = VideoDatasetWithResizeAndRectangleCrop(
             video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
         )
-    
+
     original_dataset_size = len(dataset)
-    
+
     # Split data among GPUs
     if world_size > 1:
         samples_per_gpu = original_dataset_size // world_size
@@ -413,7 +412,7 @@ def main():
         pass
 
     rank_dataset_size = len(dataset)
-    
+
     # 2. Dataloader
     def collate_fn(data):
         prompts = [x["prompt"] for x in data[0]]
@@ -453,10 +452,12 @@ def main():
         vae.enable_slicing()
     if args.use_tiling:
         vae.enable_tiling()
-    
+
     # 4. Compute latents and embeddings and save
     if rank == 0:
-        iterator = tqdm(dataloader, desc="Encoding", total=(rank_dataset_size + args.batch_size - 1) // args.batch_size)
+        iterator = tqdm(
+            dataloader, desc="Encoding", total=(rank_dataset_size + args.batch_size - 1) // args.batch_size
+        )
     else:
         iterator = dataloader
 
@@ -467,7 +468,7 @@ def main():
                 images = batch["images"].to(device, non_blocking=True)
             videos = batch["videos"].to(device, non_blocking=True)
             prompts = batch["prompts"]
-            
+
             # Encode videos & images
             image_latents = None
             if args.save_image_latents:
@@ -487,7 +488,7 @@ def main():
             video_latents = latent_dist.sample() * vae.config.scaling_factor
             video_latents = video_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
             video_latents = video_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
-                
+
             # Encode prompts
             prompt_embeds = compute_prompt_embeddings(
                 tokenizer,
@@ -499,44 +500,55 @@ def main():
                 requires_grad=False,
             )
 
-            output_queue.put({
-                "batch_size": prompt_embeds.shape[0],
-                "fps": target_fps,
-                "images_dir": images_dir,
-                "image_latents_dir": image_latents_dir,
-                "videos_dir": videos_dir,
-                "video_latents_dir": video_latents_dir,
-                "prompts_dir": prompts_dir,
-                "prompt_embeds_dir": prompt_embeds_dir,
-                "images": images,
-                "image_latents": image_latents,
-                "videos": videos,
-                "video_latents": video_latents,
-                "prompts": prompts,
-                "prompt_embeds": prompt_embeds,
-            })
+            output_queue.put(
+                {
+                    "batch_size": prompt_embeds.shape[0],
+                    "fps": target_fps,
+                    "images_dir": images_dir,
+                    "image_latents_dir": image_latents_dir,
+                    "videos_dir": videos_dir,
+                    "video_latents_dir": video_latents_dir,
+                    "prompts_dir": prompts_dir,
+                    "prompt_embeds_dir": prompt_embeds_dir,
+                    "images": images,
+                    "image_latents": image_latents,
+                    "videos": videos,
+                    "video_latents": video_latents,
+                    "prompts": prompts,
+                    "prompt_embeds": prompt_embeds,
+                }
+            )
 
         except Exception:
             print("-------------------------")
             print(f"An exception occurred while processing data: {rank=}, {world_size=}, {step=}")
             traceback.print_exc()
             print("-------------------------")
-    
+
     # 5. Complete distributed processing
     if world_size > 1:
         dist.barrier()
         dist.destroy_process_group()
-    
+
     output_queue.put(None)
     save_thread.shutdown(wait=True)
     save_future.result()
 
     # 6. Combine results from each rank
     if rank == 0:
-        print(f"Completed preprocessing latents and embeddings. Temporary files from all ranks saved to `{args.output_dir}`")
+        print(
+            f"Completed preprocessing latents and embeddings. Temporary files from all ranks saved to `{args.output_dir}`"
+        )
 
         # Move files from each rank to common directory
-        for subfolder, extension in [("images", "png"), ("image_latents", "pt"), ("videos", "mp4"), ("video_latents", "pt"), ("prompts", "txt"), ("prompt_embeds", "pt")]:
+        for subfolder, extension in [
+            ("images", "png"),
+            ("image_latents", "pt"),
+            ("videos", "mp4"),
+            ("video_latents", "pt"),
+            ("prompts", "txt"),
+            ("prompt_embeds", "pt"),
+        ]:
             tmp_subfolder = tmp_dir.joinpath(subfolder)
             combined_subfolder = output_dir.joinpath(subfolder)
             combined_subfolder.mkdir(parents=True, exist_ok=True)
@@ -544,7 +556,7 @@ def main():
 
             for file in tmp_subfolder.rglob(pattern):
                 file.replace(combined_subfolder / file.name)
-        
+
         # Remove temporary directories
         def rmdir_recursive(dir: pathlib.Path) -> None:
             for child in dir.iterdir():
@@ -553,7 +565,7 @@ def main():
                 else:
                     rmdir_recursive(child)
             dir.rmdir()
-        
+
         rmdir_recursive(tmp_dir)
 
         # Combine prompts and videos into individual text files and single jsonl
@@ -565,19 +577,19 @@ def main():
             with open(filename, "r") as file:
                 prompts.append(file.read().strip())
             stems.append(filename.stem)
-        
+
         prompts_txt = output_dir.joinpath("prompts.txt")
         videos_txt = output_dir.joinpath("videos.txt")
         data_jsonl = output_dir.joinpath("data.jsonl")
-        
+
         with open(prompts_txt, "w") as file:
             for prompt in prompts:
                 file.write(f"{prompt}\n")
-        
+
         with open(videos_txt, "w") as file:
             for stem in stems:
                 file.write(f"videos/{stem}.pt\n")
-        
+
         with open(data_jsonl, "w") as file:
             for prompt, stem in zip(prompts, stems):
                 data = {

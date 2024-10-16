@@ -85,7 +85,9 @@ class VideoDataset(Dataset):
 
         self.video_transforms = transforms.Compose(
             [
-                transforms.RandomHorizontalFlip(random_flip) if random_flip else transforms.Lambda(self.identity_transform),
+                transforms.RandomHorizontalFlip(random_flip)
+                if random_flip
+                else transforms.Lambda(self.identity_transform),
                 transforms.Lambda(self.scale_transform),
                 transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
             ]
@@ -357,7 +359,9 @@ class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
 
 
 class BucketSampler(Sampler):
-    def __init__(self, data_source: VideoDataset, batch_size: int = 8, shuffle: bool = True, drop_last: bool = False) -> None:
+    def __init__(
+        self, data_source: VideoDataset, batch_size: int = 8, shuffle: bool = True, drop_last: bool = False
+    ) -> None:
         self.data_source = data_source
         self.batch_size = batch_size
         self.shuffle = shuffle
@@ -377,7 +381,7 @@ class BucketSampler(Sampler):
                 yield self.buckets[(f, h, w)]
                 del self.buckets[(f, h, w)]
                 self.buckets[(f, h, w)] = []
-        
+
         if self.drop_last:
             return
 
