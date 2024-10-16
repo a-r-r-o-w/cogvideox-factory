@@ -86,11 +86,19 @@ class VideoDataset(Dataset):
 
         self.video_transforms = transforms.Compose(
             [
-                transforms.RandomHorizontalFlip(random_flip) if random_flip else transforms.Lambda(lambda x: x),
-                transforms.Lambda(lambda x: x / 255.0),
+                transforms.RandomHorizontalFlip(random_flip) if random_flip else transforms.Lambda(self.identity_transform),
+                transforms.Lambda(self.scale_transform),
                 transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
             ]
         )
+
+    @staticmethod
+    def identity_transform(x):
+        return x
+
+    @staticmethod
+    def scale_transform(x):
+        return x / 255.0
 
     def __len__(self) -> int:
         return self.num_videos
