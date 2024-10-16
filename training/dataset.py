@@ -78,8 +78,7 @@ class VideoDataset(Dataset):
                 self.video_paths,
             ) = self._load_dataset_from_csv()
 
-        self.num_videos = len(self.video_paths)
-        if self.num_videos != len(self.prompts):
+        if len(self.video_paths) != len(self.prompts):
             raise ValueError(
                 f"Expected length of prompts and videos to be the same but found {len(self.prompts)=} and {len(self.video_paths)=}. Please ensure that the number of caption prompts and videos match in your dataset."
             )
@@ -101,7 +100,7 @@ class VideoDataset(Dataset):
         return x / 255.0
 
     def __len__(self) -> int:
-        return self.num_videos
+        return len(self.video_paths)
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         if isinstance(index, list):
@@ -358,10 +357,11 @@ class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
 
 
 class BucketSampler(Sampler):
-    def __init__(self, data_source: VideoDataset, batch_size: int = 8, shuffle: bool = True) -> None:
+    def __init__(self, data_source: VideoDataset, batch_size: int = 8, shuffle: bool = True, drop_last: bool = False) -> None:
         self.data_source = data_source
         self.batch_size = batch_size
         self.shuffle = shuffle
+        self.drop_last = drop_last
 
         self.buckets = {resolution: [] for resolution in data_source.resolutions}
 
@@ -377,3 +377,15 @@ class BucketSampler(Sampler):
                 yield self.buckets[(f, h, w)]
                 del self.buckets[(f, h, w)]
                 self.buckets[(f, h, w)] = []
+        
+        if self.drop_last:
+            return
+
+        for fhw, bucket in list(self.buckets.items()):
+            if len(bucket) == 0:
+                continue
+            if self.shuffle:
+                random.shuffle(bucket)
+                yield bucket
+                del self.buckets[fhw]
+                self.buckets[fhw] = []
