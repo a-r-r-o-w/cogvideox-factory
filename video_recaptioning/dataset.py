@@ -19,7 +19,10 @@ class VideoDataset(Dataset):
         video_files = {
             os.path.join(root_video_dir, f) for f in os.listdir(root_video_dir) if f.endswith(video_extensions)
         }
-        existing_caption_basenames = {os.path.splitext(f)[0] for f in os.listdir(output_dir) if "_caption.txt" in f}
+        if os.path.isdir(output_dir):
+            existing_caption_basenames = {os.path.splitext(f)[0] for f in os.listdir(output_dir) if "_caption.txt" in f}
+        else:
+            existing_caption_basenames = None
         if existing_caption_basenames:
             if len(existing_caption_basenames) == len(video_files):
                 sys.exit("It seems like all the input videos have been already captioned. So, we're exiting the program.")

@@ -2,6 +2,7 @@
 Needs `vllm` to be installed from the `main`.
 """
 
+from typing import Optional
 from vllm import LLM, SamplingParams
 import queue
 from torch.utils.data import DataLoader
@@ -65,9 +66,9 @@ def prepare_dataloader(
     )
     return dataloader
 
-def load_model(max_num_frames: int, max_tokens: int, num_devices: int):
+def load_model(max_num_frames: int, max_tokens: int, num_devices: int, download_dir: Optional[str] = None):
     vllm_engine = LLM(
-        "Qwen/Qwen2-VL-2B-Instruct", tensor_parallel_size=num_devices, limit_mm_per_prompt={"image": max_num_frames}
+        "Qwen/Qwen2-VL-2B-Instruct", tensor_parallel_size=num_devices, limit_mm_per_prompt={"image": max_num_frames}, download_dir=download_dir
     )
     sampling_params = SamplingParams(max_tokens=max_tokens)
     return vllm_engine, sampling_params
@@ -83,11 +84,12 @@ def main(
         video_extensions: tuple = (".mp4"),
         num_data_workers:int = 4, 
         batch_size:int = 8, 
-        num_artifact_workers:int = 4
+        num_artifact_workers:int = 4,
+        download_dir: Optional[str] = None,
     ):
     max_allowed_imgs_per_req = batch_size * max_num_frames
     vllm_engine, sampling_params = load_model(
-        max_num_frames=max_allowed_imgs_per_req, max_tokens=max_tokens, num_devices=num_devices
+        max_num_frames=max_allowed_imgs_per_req, max_tokens=max_tokens, num_devices=num_devices, download_dir=download_dir,
     )
     dataloader = prepare_dataloader(
         video_root_dir=root_dir, 
