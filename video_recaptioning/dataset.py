@@ -6,16 +6,34 @@ from typing import Tuple, List
 import os
 import io 
 import base64
+import sys
 
 class VideoDataset(Dataset):
-    def __init__(self, root_video_dir: str, max_num_frames: int, video_extensions: Tuple[str] = (".mp4")):
+    def __init__(
+            self, root_video_dir: str, output_dir: str, max_num_frames: int, video_extensions: Tuple[str] = (".mp4")
+        ):
         self.root_video_dir = root_video_dir
         self.max_num_frames = max_num_frames
 
-        video_files = [
+        # Filter out existing captions.
+        video_files = {
             os.path.join(root_video_dir, f) for f in os.listdir(root_video_dir) if f.endswith(video_extensions)
-        ]
-        self.video_files = sorted(video_files)
+        }
+        existing_caption_basenames = {os.path.splitext(f)[0] for f in os.listdir(output_dir) if "_caption.txt" in f}
+        if existing_caption_basenames:
+            if len(existing_caption_basenames) == len(video_files):
+                sys.exit("It seems like all the input videos have been already captioned. So, we're exiting the program.")
+            filtered_video_files = [
+                f for f in video_files if os.path.splitext(os.path.basename(f))[0] + "_caption" not in existing_caption_basenames
+            ]
+            if len(video_files) > len(filtered_video_files):
+                diff = len(video_files) - len(filtered_video_files)
+                print(f"Found existing captions for {diff} videos. Will skip them.") 
+        
+            self.video_files = sorted(filtered_video_files)
+        else:
+            self.video_files = sorted(video_files)
+            print(f"Total videos found: {len(self.video_files)}.")
 
     def __len__(self) -> int:
         return len(self.video_files)
