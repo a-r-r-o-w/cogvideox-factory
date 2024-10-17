@@ -200,6 +200,7 @@ def log_validation(
 
     return videos
 
+
 class CollateFunction:
     def __init__(self, weight_dtype, load_tensors):
         self.weight_dtype = weight_dtype
@@ -222,6 +223,7 @@ class CollateFunction:
             "videos": videos,
             "prompts": prompts,
         }
+
 
 def main(args):
     if args.report_to == "wandb" and args.hub_token is not None:
@@ -647,7 +649,7 @@ def main(args):
 
                 # Encode videos
                 if not args.load_tensors:
-                    images = images.permute(0, 2, 1, 3, 4) # [B, C, F, H, W]
+                    images = images.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                     image_noise_sigma = torch.normal(
                         mean=-3.0, std=0.5, size=(images.size(0),), device=accelerator.device, dtype=weight_dtype
                     )
