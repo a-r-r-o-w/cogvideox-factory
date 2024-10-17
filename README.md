@@ -429,7 +429,7 @@ With `train_batch_size = 4`:
 - [ ] Make scripts compatible with FSDP
 - [x] Make scripts compatible with DeepSpeed
 - [ ] vLLM-powered captioning script
-- [ ] Multi-resolution/frame support in `prepare_dataset.py`
+- [x] Multi-resolution/frame support in `prepare_dataset.py`
 - [ ] Analyzing traces for potential speedups and removing as many syncs as possible
 - [ ] Support for QLoRA (priority), and other types of high usage LoRAs methods
 - [x] Test scripts with memory-efficient optimizer from bitsandbytes

@@ -445,6 +445,8 @@ def main():
 
     # 3. Prepare models
     device = f"cuda:{rank}"
+    
+    generator = torch.Generator(device).manual_seed(args.seed)
 
     tokenizer = T5Tokenizer.from_pretrained(args.model_id, subfolder="tokenizer")
     text_encoder = T5EncoderModel.from_pretrained(args.model_id, subfolder="text_encoder", torch_dtype=weight_dtype)
@@ -479,10 +481,10 @@ def main():
             if args.save_image_latents:
                 images = images.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                 image_noise_sigma = torch.normal(
-                    mean=-3.0, std=0.5, size=(images.size(0),), device=device, dtype=weight_dtype
+                    mean=-3.0, std=0.5, size=(images.size(0),), generator=generator, device=device, dtype=weight_dtype
                 )
                 image_noise_sigma = torch.exp(image_noise_sigma)
-                noisy_images = images + torch.randn_like(images) * image_noise_sigma[:, None, None, None, None]
+                noisy_images = images + torch.empty_like(images).normal_(generator=generator) * image_noise_sigma[:, None, None, None, None]
                 image_latent_dist = vae.encode(noisy_images).latent_dist
                 image_latents = image_latent_dist.sample() * vae.config.scaling_factor
                 image_latents = image_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
@@ -490,7 +492,7 @@ def main():
 
             videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
             latent_dist = vae.encode(videos).latent_dist
-            video_latents = latent_dist.sample() * vae.config.scaling_factor
+            video_latents = latent_dist.sample(generator=generator) * vae.config.scaling_factor
             video_latents = video_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
             video_latents = video_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
 
