@@ -375,7 +375,7 @@ class BucketSampler(Sampler):
             be yielded. If set to False, it is guaranteed that all data in the dataset will be processed
             and batches that do not have `batch_size` number of entries will also be yielded.
     """
-    
+
     def __init__(
         self, data_source: VideoDataset, batch_size: int = 8, shuffle: bool = True, drop_last: bool = False
     ) -> None:
@@ -385,6 +385,16 @@ class BucketSampler(Sampler):
         self.drop_last = drop_last
 
         self.buckets = {resolution: [] for resolution in data_source.resolutions}
+
+        self._raised_warning_for_drop_last = False
+
+    def __len__(self):
+        if self.drop_last and not self._raised_warning_for_drop_last:
+            self._raised_warning_for_drop_last = True
+            logger.warning(
+                "Calculating the length for bucket sampler is not possible when `drop_last` is set to True. This may cause problems when setting the number of epochs used for training."
+            )
+        return (len(self.data_source) + self.batch_size - 1) // self.batch_size
 
     def __iter__(self):
         for index, data in enumerate(self.data_source):

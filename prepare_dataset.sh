@@ -38,7 +38,7 @@ CMD_WITHOUT_PRE_ENCODING="\
       --dtype $DTYPE
 "
 
-CMD_WITH_PRE_ENCODING="$CMD_WITHOUT_PRE_ENCODING --save_tensors"
+CMD_WITH_PRE_ENCODING="$CMD_WITHOUT_PRE_ENCODING --save_latents_and_embeddings"
 
 # Select which you'd like to run
 CMD=$CMD_WITH_PRE_ENCODING
