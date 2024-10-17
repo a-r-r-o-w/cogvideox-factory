@@ -555,7 +555,7 @@ def main():
                     weight_dtype,
                     requires_grad=False,
                 )
-            
+
             if images is not None:
                 images = (images.permute(0, 2, 1, 3, 4) + 1) / 2
 
