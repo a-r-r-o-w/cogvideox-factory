@@ -46,7 +46,7 @@ from diffusers import export_to_video
 pipe = CogVideoXPipeline.from_pretrained(
     "THUDM/CogVideoX-5b", torch_dtype=torch.bfloat16
 ).to("cuda")
-+ pipe.load_lora_weights("my-awesome-name/my-awesome-lora", adapter_name=["cogvideox-lora"])
++ pipe.load_lora_weights("my-awesome-name/my-awesome-lora", adapter_name="cogvideox-lora")
 + pipe.set_adapters(["cogvideox-lora"], [1.0])
 
 video = pipe("<my-awesome-prompt>").frames[0]

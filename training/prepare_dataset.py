@@ -38,6 +38,27 @@ DTYPE_MAPPING = {
 }
 
 
+def check_height(x: Any) -> int:
+    x = int(x)
+    if x % 16 != 0:
+        raise argparse.ArgumentTypeError(f"`--height_buckets` must be divisible by 16, but got {x} which does not fit criteria.")
+    return x
+
+
+def check_width(x: Any) -> int:
+    x = int(x)
+    if x % 16 != 0:
+        raise argparse.ArgumentTypeError(f"`--width_buckets` must be divisible by 16, but got {x} which does not fit criteria.")
+    return x
+
+
+def check_frames(x: Any) -> int:
+    x = int(x)
+    if x % 4 != 0 and x % 4 != 1:
+        raise argparse.ArgumentTypeError(f"`--frames_buckets` must be of form `4 * k` or `4 * k + 1`, but got {x} which does not fit criteria.")
+    return x
+
+
 def get_args() -> Dict[str, Any]:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -71,19 +92,19 @@ def get_args() -> Dict[str, Any]:
     parser.add_argument(
         "--height_buckets",
         nargs="+",
-        type=int,
+        type=check_height,
         default=[256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536],
     )
     parser.add_argument(
         "--width_buckets",
         nargs="+",
-        type=int,
+        type=check_width,
         default=[256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536],
     )
     parser.add_argument(
         "--frame_buckets",
         nargs="+",
-        type=int,
+        type=check_frames,
         default=[49],
     )
     parser.add_argument(
@@ -611,16 +632,4 @@ def main():
 
 
 if __name__ == "__main__":
-    args = get_args()
-
-    for height in args.height_buckets:
-        assert height % 16 == 0, f"CogVideoX requires input video height to be divisible by 16 but got {height=}."
-    for width in args.width_buckets:
-        assert width % 16 == 0, f"CogVideoX requires input video width to be divisible by 16 but got {width=}."
-    for frame in args.frame_buckets:
-        assert frame % 4 == 0 or frame % 4 == 1, "CogVideoX requires input video to have (4 * k) or (4 * k + 1) frames"
-    assert (
-        args.max_num_frames % 4 == 0 or args.max_num_frames % 4 == 1
-    ), "`--max_num_frames` must be of form 4 * k or 4 * k + 1 to be compatible with VAE."
-
     main()

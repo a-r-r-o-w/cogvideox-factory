@@ -359,6 +359,23 @@ class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
 
 
 class BucketSampler(Sampler):
+    r"""
+    PyTorch Sampler that groups 3D data by height, width and frames.
+
+    Args:
+        data_source (`VideoDataset`):
+            A PyTorch dataset object that is an instance of `VideoDataset`.
+        batch_size (`int`, defaults to `8`):
+            The batch size to use for training.
+        shuffle (`bool`, defaults to `True`):
+            Whether or not to shuffle the data in each batch before dispatching to dataloader.
+        drop_last (`bool`, defaults to `False`):
+            Whether or not to drop incomplete buckets of data after completely iterating over all data
+            in the dataset. If set to True, only batches that have `batch_size` number of entries will
+            be yielded. If set to False, it is guaranteed that all data in the dataset will be processed
+            and batches that do not have `batch_size` number of entries will also be yielded.
+    """
+    
     def __init__(
         self, data_source: VideoDataset, batch_size: int = 8, shuffle: bool = True, drop_last: bool = False
     ) -> None:
