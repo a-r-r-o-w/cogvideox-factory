@@ -565,7 +565,7 @@ def main():
     # 6. Combine results from each rank
     if rank == 0:
         print(
-            f"Completed preprocessing latents and embeddings. Temporary files from all ranks saved to `{args.output_dir}`"
+            f"Completed preprocessing latents and embeddings. Temporary files from all ranks saved to `{tmp_dir.as_posix()}`"
         )
 
         # Move files from each rank to common directory
@@ -629,6 +629,10 @@ def main():
                     "video_latent": f"video_latents/{stem}.pt",
                 }
                 file.write(json.dumps(data) + "\n")
+        
+        print(
+            f"Completed preprocessing. All files saved to `{output_dir.as_posix()}`"
+        )
 
 
 if __name__ == "__main__":
