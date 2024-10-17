@@ -323,10 +323,6 @@ def serialize_artifacts(
     prompts: Optional[List[str]] = None,
     prompt_embeds: Optional[torch.Tensor] = None,
 ) -> None:
-    if images is not None:
-        images = (images.permute(0, 2, 1, 3, 4) + 1) / 2
-
-    videos = (videos.permute(0, 2, 1, 3, 4) + 1) / 2
     num_frames, height, width = videos.size(1), videos.size(3), videos.size(4)
     metadata = [{"num_frames": num_frames, "height": height, "width": width}]
 
@@ -346,7 +342,7 @@ def serialize_artifacts(
             continue
         for slice, filename in zip(data, filenames):
             if isinstance(slice, torch.Tensor):
-                slice = slice.clone()
+                slice = slice.clone().to("cpu")
             path = folder.joinpath(f"{filename}.{extension}")
             save_fn(slice, path)
 
@@ -515,14 +511,16 @@ def main():
 
             if args.save_image_latents:
                 images = batch["images"].to(device, non_blocking=True)
+                images = images.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
 
             videos = batch["videos"].to(device, non_blocking=True)
+            videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+
             prompts = batch["prompts"]
 
             # Encode videos & images
             if args.save_latents_and_embeddings:
                 if args.save_image_latents:
-                    images = images.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                     image_noise_sigma = torch.normal(
                         mean=-3.0,
                         std=0.5,
@@ -542,7 +540,6 @@ def main():
                     image_latents = image_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
                     image_latents = image_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
 
-                videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                 latent_dist = vae.encode(videos).latent_dist
                 video_latents = latent_dist.sample(generator=generator) * vae.config.scaling_factor
                 video_latents = video_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
@@ -558,6 +555,11 @@ def main():
                     weight_dtype,
                     requires_grad=False,
                 )
+            
+            if images is not None:
+                images = (images.permute(0, 2, 1, 3, 4) + 1) / 2
+
+            videos = (videos.permute(0, 2, 1, 3, 4) + 1) / 2
 
             output_queue.put(
                 {
