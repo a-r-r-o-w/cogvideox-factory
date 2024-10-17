@@ -440,7 +440,7 @@ diffusers（该分支为 CogVideoX 的图像到视频添加了 LoRA 加载支持
 - [ ] 使脚本兼容 FSDP
 - [x] 使脚本兼容 DeepSpeed
 - [ ] 基于 vLLM 的字幕脚本
-- [ ] 在 `prepare_dataset.py` 中支持多分辨率/帧数
+- [x] 在 `prepare_dataset.py` 中支持多分辨率/帧数
 - [ ] 分析性能瓶颈并尽可能减少同步操作
 - [ ] 支持 QLoRA（优先），以及其他高使用率的 LoRA 方法
 - [x] 使用 bitsandbytes 的节省内存优化器测试脚本

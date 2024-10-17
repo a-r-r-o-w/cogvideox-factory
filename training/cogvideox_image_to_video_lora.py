@@ -26,7 +26,6 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
-import wandb
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -52,6 +51,8 @@ from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dic
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
+
+import wandb
 
 
 from args import get_args  # isort:skip
@@ -200,6 +201,7 @@ def log_validation(
 
     return videos
 
+
 class CollateFunction:
     def __init__(self, weight_dtype, load_tensors):
         self.weight_dtype = weight_dtype
@@ -222,6 +224,7 @@ class CollateFunction:
             "videos": videos,
             "prompts": prompts,
         }
+
 
 def main(args):
     if args.report_to == "wandb" and args.hub_token is not None:
@@ -521,7 +524,7 @@ def main(args):
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -558,7 +561,7 @@ def main(args):
     )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
@@ -580,6 +583,7 @@ def main(args):
     accelerator.print("***** Running training *****")
     accelerator.print(f"  Num trainable parameters = {num_trainable_parameters}")
     accelerator.print(f"  Num examples = {len(train_dataset)}")
+    accelerator.print(f"  Num batches each epoch = {len(train_dataloader)}")
     accelerator.print(f"  Num epochs = {args.num_train_epochs}")
     accelerator.print(f"  Instantaneous batch size per device = {args.train_batch_size}")
     accelerator.print(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -647,7 +651,7 @@ def main(args):
 
                 # Encode videos
                 if not args.load_tensors:
-                    images = images.permute(0, 2, 1, 3, 4) # [B, C, F, H, W]
+                    images = images.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                     image_noise_sigma = torch.normal(
                         mean=-3.0, std=0.5, size=(images.size(0),), device=accelerator.device, dtype=weight_dtype
                     )

@@ -46,7 +46,7 @@ from diffusers import export_to_video
 pipe = CogVideoXPipeline.from_pretrained(
     "THUDM/CogVideoX-5b", torch_dtype=torch.bfloat16
 ).to("cuda")
-+ pipe.load_lora_weights("my-awesome-name/my-awesome-lora", adapter_name=["cogvideox-lora"])
++ pipe.load_lora_weights("my-awesome-name/my-awesome-lora", adapter_name="cogvideox-lora")
 + pipe.set_adapters(["cogvideox-lora"], [1.0])
 
 video = pipe("<my-awesome-prompt>").frames[0]
@@ -429,7 +429,7 @@ With `train_batch_size = 4`:
 - [ ] Make scripts compatible with FSDP
 - [x] Make scripts compatible with DeepSpeed
 - [ ] vLLM-powered captioning script
-- [ ] Multi-resolution/frame support in `prepare_dataset.py`
+- [x] Multi-resolution/frame support in `prepare_dataset.py`
 - [ ] Analyzing traces for potential speedups and removing as many syncs as possible
 - [ ] Support for QLoRA (priority), and other types of high usage LoRAs methods
 - [x] Test scripts with memory-efficient optimizer from bitsandbytes
