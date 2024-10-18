@@ -9,9 +9,10 @@ DATA_ROOT="/path/to/my/datasets/video-dataset"  # This needs to be the path to t
 CAPTION_COLUMN="prompt.txt"
 VIDEO_COLUMN="videos.txt"
 OUTPUT_DIR="/path/to/my/datasets/preprocessed-dataset"
-HEIGHT=480
-WIDTH=720
-MAX_NUM_FRAMES=49
+HEIGHT_BUCKETS="480 720"
+WIDTH_BUCKETS="720 960"
+FRAME_BUCKETS="49"
+MAX_NUM_FRAMES="49"
 MAX_SEQUENCE_LENGTH=226
 TARGET_FPS=8
 BATCH_SIZE=1
@@ -27,8 +28,9 @@ CMD_WITHOUT_PRE_ENCODING="\
       --caption_column $CAPTION_COLUMN \
       --video_column $VIDEO_COLUMN \
       --output_dir $OUTPUT_DIR \
-      --height $HEIGHT \
-      --width $WIDTH \
+      --height_buckets $HEIGHT_BUCKETS \
+      --width_buckets $WIDTH_BUCKETS \
+      --frame_buckets $FRAME_BUCKETS \
       --max_num_frames $MAX_NUM_FRAMES \
       --max_sequence_length $MAX_SEQUENCE_LENGTH \
       --target_fps $TARGET_FPS \
@@ -36,7 +38,7 @@ CMD_WITHOUT_PRE_ENCODING="\
       --dtype $DTYPE
 "
 
-CMD_WITH_PRE_ENCODING="$CMD_WITHOUT_PRE_ENCODING --save_tensors"
+CMD_WITH_PRE_ENCODING="$CMD_WITHOUT_PRE_ENCODING --save_latents_and_embeddings"
 
 # Select which you'd like to run
 CMD=$CMD_WITH_PRE_ENCODING
