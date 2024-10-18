@@ -26,6 +26,7 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
+import wandb
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -51,8 +52,6 @@ from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dic
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
-
-import wandb
 
 
 from args import get_args  # isort:skip
@@ -203,11 +202,11 @@ def log_validation(
 
 
 class CollateFunction:
-    def __init__(self, weight_dtype, load_tensors):
+    def __init__(self, weight_dtype: torch.dtype, load_tensors: bool) -> None:
         self.weight_dtype = weight_dtype
         self.load_tensors = load_tensors
 
-    def __call__(self, data):
+    def __call__(self, data: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         prompts = [x["prompt"] for x in data[0]]
 
         if self.load_tensors:
@@ -511,13 +510,13 @@ def main(args):
             video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
         )
 
-    collate_fn_instance = CollateFunction(weight_dtype, args.load_tensors)
+    collate_fn = CollateFunction(weight_dtype, args.load_tensors)
 
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=1,
         sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
-        collate_fn=collate_fn_instance,
+        collate_fn=collate_fn,
         num_workers=args.dataloader_num_workers,
         pin_memory=args.pin_memory,
     )

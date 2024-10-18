@@ -25,6 +25,7 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
+import wandb
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -49,8 +50,6 @@ from huggingface_hub import create_repo, upload_folder
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
-
-import wandb
 
 
 from args import get_args  # isort:skip
@@ -187,6 +186,26 @@ def log_validation(
             )
 
     return videos
+
+
+class CollateFunction:
+    def __init__(self, weight_dtype: torch.dtype, load_tensors: bool) -> None:
+        self.weight_dtype = weight_dtype
+        self.load_tensors = load_tensors
+
+    def __call__(self, data: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        prompts = [x["prompt"] for x in data[0]]
+
+        if self.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
+
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
+
+        return {
+            "videos": videos,
+            "prompts": prompts,
+        }
 
 
 def main(args):
@@ -447,19 +466,7 @@ def main(args):
             video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
         )
 
-    def collate_fn(data):
-        prompts = [x["prompt"] for x in data[0]]
-
-        if args.load_tensors:
-            prompts = torch.stack(prompts).to(dtype=weight_dtype, non_blocking=True)
-
-        videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(dtype=weight_dtype, non_blocking=True)
-
-        return {
-            "videos": videos,
-            "prompts": prompts,
-        }
+    collate_fn = CollateFunction(weight_dtype, args.load_tensors)
 
     train_dataloader = DataLoader(
         train_dataset,
