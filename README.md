@@ -412,7 +412,7 @@ With `train_batch_size = 4`:
 > [!NOTE]
 > - `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose not to perform validation/testing as part of the training script.
 >
-> - `memory_before_validation` is the true indicator of the peak memory required for training if you choose to not perform validation/testing.
+> - `memory_before_validation` is the true indicator of the peak memory required for training if you choose not to perform validation/testing.
 
 <table align="center">
 <tr>
