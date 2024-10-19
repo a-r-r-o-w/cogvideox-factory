@@ -111,7 +111,7 @@ class VideoDataset(Dataset):
             # to have information about num_frames, height and width. Since this is not stored
             # as metadata, we need to read the video to get this information. You could read this
             # information without loading the full video in memory, but we do it anyway. In order
-            # to not load the video twice (once to get the metadata, and once to return the loaded video
+            # not to load the video twice (once to get the metadata, and once to return the loaded video
             # based on sampled indices), we cache it in the BucketSampler. When the sampler is
             # to yield, we yield the cache data instead of indices. So, this special check ensures
             # that data is not loaded a second time. PRs are welcome for improvements.
