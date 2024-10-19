@@ -26,7 +26,6 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
-import wandb
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -52,6 +51,8 @@ from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dic
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
+
+import wandb
 
 
 from args import get_args  # isort:skip
@@ -199,6 +200,30 @@ def log_validation(
             )
 
     return videos
+
+
+class CollateFunction:
+    def __init__(self, weight_dtype, load_tensors):
+        self.weight_dtype = weight_dtype
+        self.load_tensors = load_tensors
+
+    def __call__(self, data):
+        prompts = [x["prompt"] for x in data[0]]
+
+        if self.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
+
+        images = [x["image"] for x in data[0]]
+        images = torch.stack(images).to(dtype=self.weight_dtype, non_blocking=True)
+
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
+
+        return {
+            "images": images,
+            "videos": videos,
+            "prompts": prompts,
+        }
 
 
 def main(args):
@@ -486,36 +511,20 @@ def main(args):
             video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
         )
 
-    def collate_fn(data):
-        prompts = [x["prompt"] for x in data[0]]
-
-        if args.load_tensors:
-            prompts = torch.stack(prompts).to(dtype=weight_dtype, non_blocking=True)
-
-        images = [x["image"] for x in data[0]]
-        images = torch.stack(images).to(dtype=weight_dtype, non_blocking=True)
-
-        videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(dtype=weight_dtype, non_blocking=True)
-
-        return {
-            "images": images,
-            "videos": videos,
-            "prompts": prompts,
-        }
+    collate_fn_instance = CollateFunction(weight_dtype, args.load_tensors)
 
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=1,
         sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
-        collate_fn=collate_fn,
+        collate_fn=collate_fn_instance,
         num_workers=args.dataloader_num_workers,
         pin_memory=args.pin_memory,
     )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -552,7 +561,7 @@ def main(args):
     )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
@@ -574,6 +583,7 @@ def main(args):
     accelerator.print("***** Running training *****")
     accelerator.print(f"  Num trainable parameters = {num_trainable_parameters}")
     accelerator.print(f"  Num examples = {len(train_dataset)}")
+    accelerator.print(f"  Num batches each epoch = {len(train_dataloader)}")
     accelerator.print(f"  Num epochs = {args.num_train_epochs}")
     accelerator.print(f"  Instantaneous batch size per device = {args.train_batch_size}")
     accelerator.print(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -641,6 +651,7 @@ def main(args):
 
                 # Encode videos
                 if not args.load_tensors:
+                    images = images.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                     image_noise_sigma = torch.normal(
                         mean=-3.0, std=0.5, size=(images.size(0),), device=accelerator.device, dtype=weight_dtype
                     )
