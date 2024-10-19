@@ -26,6 +26,7 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
+import wandb
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -51,8 +52,6 @@ from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dic
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
-
-import wandb
 
 
 from args import get_args  # isort:skip
@@ -201,31 +200,14 @@ def log_validation(
     return videos
 
 
-class CollateFunction:
-    def __init__(self, weight_dtype, load_tensors):
-        self.weight_dtype = weight_dtype
-        self.load_tensors = load_tensors
-
-    def __call__(self, data):
-        prompts = [x["prompt"] for x in data[0]]
-
-        if self.load_tensors:
-            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
-
-        images = [x["image"] for x in data[0]]
-        images = torch.stack(images).to(dtype=self.weight_dtype, non_blocking=True)
-
-        videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
-
-        return {
-            "images": images,
-            "videos": videos,
-            "prompts": prompts,
-        }
-
-
-def run_validation(args: Dict[str, Any], accelerator: Accelerator, transformer, scheduler, model_config: Dict[str, Any], weight_dtype: torch.dtype) -> None:
+def run_validation(
+    args: Dict[str, Any],
+    accelerator: Accelerator,
+    transformer,
+    scheduler,
+    model_config: Dict[str, Any],
+    weight_dtype: torch.dtype,
+) -> None:
     accelerator.print("===== Memory before validation =====")
     print_memory(accelerator.device)
     torch.cuda.synchronize(accelerator.device)
@@ -276,10 +258,34 @@ def run_validation(args: Dict[str, Any], accelerator: Accelerator, transformer, 
     torch.cuda.synchronize(accelerator.device)
 
 
+class CollateFunction:
+    def __init__(self, weight_dtype, load_tensors):
+        self.weight_dtype = weight_dtype
+        self.load_tensors = load_tensors
+
+    def __call__(self, data):
+        prompts = [x["prompt"] for x in data[0]]
+
+        if self.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
+
+        images = [x["image"] for x in data[0]]
+        images = torch.stack(images).to(dtype=self.weight_dtype, non_blocking=True)
+
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
+
+        return {
+            "images": images,
+            "videos": videos,
+            "prompts": prompts,
+        }
+
+
 def unwrap_model(accelerator: Accelerator, model):
-        model = accelerator.unwrap_model(model)
-        model = model._orig_mod if is_compiled_module(model) else model
-        return model
+    model = accelerator.unwrap_model(model)
+    model = model._orig_mod if is_compiled_module(model) else model
+    return model
 
 
 def main(args):
@@ -850,7 +856,7 @@ def main(args):
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
-                
+
                 # Validation
                 should_run_validation = args.validation_prompt is not None and (
                     args.validation_steps is not None and global_step % args.validation_steps == 0
@@ -873,7 +879,7 @@ def main(args):
 
         if accelerator.is_main_process:
             should_run_validation = args.validation_prompt is not None and (
-                (args.validation_epochs is not None and (epoch + 1) % args.validation_epochs == 0)
+                args.validation_epochs is not None and (epoch + 1) % args.validation_epochs == 0
             )
             if should_run_validation:
                 run_validation(args, accelerator, transformer, scheduler, model_config, weight_dtype)
