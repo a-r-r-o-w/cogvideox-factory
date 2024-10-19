@@ -25,6 +25,7 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
+import wandb
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -50,8 +51,6 @@ from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dic
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
-
-import wandb
 
 
 from args import get_args  # isort:skip
@@ -386,7 +385,9 @@ def main(args):
                 else:
                     raise ValueError(f"Unexpected save model: {unwrap_model(model).__class__}")
         else:
-            transformer_ = CogVideoXTransformer3DModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="transformer")
+            transformer_ = CogVideoXTransformer3DModel.from_pretrained(
+                args.pretrained_model_name_or_path, subfolder="transformer"
+            )
             transformer_.add_adapter(transformer_lora_config)
 
         lora_state_dict = CogVideoXPipeline.lora_state_dict(input_dir)
@@ -395,7 +396,6 @@ def main(args):
             f'{k.replace("transformer.", "")}': v for k, v in lora_state_dict.items() if k.startswith("transformer.")
         }
         transformer_state_dict = convert_unet_state_dict_to_peft(transformer_state_dict)
-        print(f"{type(transformer_)=}")
         incompatible_keys = set_peft_model_state_dict(transformer_, transformer_state_dict, adapter_name="default")
         if incompatible_keys is not None:
             # check only for unexpected keys
@@ -561,7 +561,7 @@ def main(args):
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
-    if  accelerator.distributed_type == DistributedType.DEEPSPEED  or accelerator.is_main_process:
+    if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
         tracker_name = args.tracker_name or "cogvideox-lora"
         accelerator.init_trackers(tracker_name, config=vars(args))
 
