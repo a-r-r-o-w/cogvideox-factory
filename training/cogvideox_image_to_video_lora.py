@@ -803,12 +803,15 @@ def main(args):
                         logger.info(f"Saved state to {save_path}")
 
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
-            logs = {
-                "loss": loss.detach().item(),
-                "lr": last_lr,
-                "gradient_norm_before_clip": gradient_norm_before_clip,
-                "gradient_norm_after_clip": gradient_norm_after_clip,
-            }
+            logs = {"loss": loss.detach().item(), "lr": last_lr}
+            # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
+            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+                logs.update(
+                    {
+                        "gradient_norm_before_clip": gradient_norm_before_clip,
+                        "gradient_norm_after_clip": gradient_norm_after_clip,
+                    }
+                )
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
