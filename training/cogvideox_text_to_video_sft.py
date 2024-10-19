@@ -601,6 +601,8 @@ def main(args):
 
         for step, batch in enumerate(train_dataloader):
             models_to_accumulate = [transformer]
+            gradient_norm_before_clip = None
+            gradient_norm_after_clip = None
 
             with accelerator.accumulate(models_to_accumulate):
                 videos = batch["videos"].to(accelerator.device, non_blocking=True)
@@ -734,7 +736,7 @@ def main(args):
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
             logs = {"loss": loss.detach().item(), "lr": last_lr}
             # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
-            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+            if accelerator.distributed_type != DistributedType.DEEPSPEED and gradient_norm_before_clip is not None:
                 logs.update(
                     {
                         "gradient_norm_before_clip": gradient_norm_before_clip,
