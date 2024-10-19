@@ -229,32 +229,38 @@ class VideoDataset(Dataset):
         pt_filename = f"{filename_without_ext}.pt"
 
         # The current path is something like: /a/b/c/d/videos/00001.mp4
-        # We need to reach: /a/b/c/d/latents/00001.pt
-        images_path = path.parent.parent.joinpath("image_latents")
-        latents_path = path.parent.parent.joinpath("latents")
-        embeds_path = path.parent.parent.joinpath("embeddings")
+        # We need to reach: /a/b/c/d/video_latents/00001.pt
+        image_latents_path = path.parent.parent.joinpath("image_latents")
+        video_latents_path = path.parent.parent.joinpath("video_latents")
+        embeds_path = path.parent.parent.joinpath("prompt_embeds")
 
-        if not latents_path.exists() or not embeds_path.exists() or (self.image_to_video and not images_path.exists()):
+        if (
+            not video_latents_path.exists()
+            or not embeds_path.exists()
+            or (self.image_to_video and not image_latents_path.exists())
+        ):
             raise ValueError(
-                f"When setting the load_tensors parameter to `True`, it is expected that the `{self.data_root=}` contains two folders named `latents` and `embeddings`. However, these folders were not found. Please make sure to have prepared your data correctly using `prepare_data.py`. Additionally, if you're training image-to-video, it is expected that an `image_latents` folder is also present."
+                f"When setting the load_tensors parameter to `True`, it is expected that the `{self.data_root=}` contains two folders named `video_latents` and `prompt_embeds`. However, these folders were not found. Please make sure to have prepared your data correctly using `prepare_data.py`. Additionally, if you're training image-to-video, it is expected that an `image_latents` folder is also present."
             )
 
         if self.image_to_video:
-            image_filepath = images_path.joinpath(pt_filename)
-        latent_filepath = latents_path.joinpath(pt_filename)
+            image_latent_filepath = image_latents_path.joinpath(pt_filename)
+        video_latent_filepath = video_latents_path.joinpath(pt_filename)
         embeds_filepath = embeds_path.joinpath(pt_filename)
 
-        if not latent_filepath.is_file() or not embeds_filepath.is_file():
+        if not video_latent_filepath.is_file() or not embeds_filepath.is_file():
             if self.image_to_video:
-                image_filepath = image_filepath.as_posix()
-            latent_filepath = latent_filepath.as_posix()
+                image_latent_filepath = image_latent_filepath.as_posix()
+            video_latent_filepath = video_latent_filepath.as_posix()
             embeds_filepath = embeds_filepath.as_posix()
             raise ValueError(
-                f"The file {latent_filepath=} or {embeds_filepath=} could not be found. Please ensure that you've correctly executed `prepare_dataset.py`."
+                f"The file {video_latent_filepath=} or {embeds_filepath=} could not be found. Please ensure that you've correctly executed `prepare_dataset.py`."
             )
 
-        images = torch.load(image_filepath, map_location="cpu", weights_only=True) if self.image_to_video else None
-        latents = torch.load(latent_filepath, map_location="cpu", weights_only=True)
+        images = (
+            torch.load(image_latent_filepath, map_location="cpu", weights_only=True) if self.image_to_video else None
+        )
+        latents = torch.load(video_latent_filepath, map_location="cpu", weights_only=True)
         embeds = torch.load(embeds_filepath, map_location="cpu", weights_only=True)
 
         return images, latents, embeds
