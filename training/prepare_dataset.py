@@ -477,8 +477,6 @@ def main():
     # 3. Prepare models
     device = f"cuda:{rank}"
 
-    generator = torch.Generator(device).manual_seed(args.seed)
-
     if args.save_latents_and_embeddings:
         tokenizer = T5Tokenizer.from_pretrained(args.model_id, subfolder="tokenizer")
         text_encoder = T5EncoderModel.from_pretrained(
@@ -520,29 +518,22 @@ def main():
 
             # Encode videos & images
             if args.save_latents_and_embeddings:
-                if args.save_image_latents:
-                    image_noise_sigma = torch.normal(
-                        mean=-3.0,
-                        std=0.5,
-                        size=(images.size(0),),
-                        generator=generator,
-                        device=device,
-                        dtype=weight_dtype,
-                    )
-                    image_noise_sigma = torch.exp(image_noise_sigma)
-                    noisy_images = (
-                        images
-                        + torch.empty_like(images).normal_(generator=generator)
-                        * image_noise_sigma[:, None, None, None, None]
-                    )
-                    image_latent_dist = vae.encode(noisy_images).latent_dist
-                    image_latents = image_latent_dist.sample() * vae.config.scaling_factor
-                    image_latents = image_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
-                    image_latents = image_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
+                if args.use_slicing:
+                    if args.save_image_latents:
+                        encoded_slices = [vae._encode(image_slice) for image_slice in images.split(1)]
+                        image_latents = torch.cat(encoded_slices)
+                        image_latents = image_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
 
-                latent_dist = vae.encode(videos).latent_dist
-                video_latents = latent_dist.sample(generator=generator) * vae.config.scaling_factor
-                video_latents = video_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+                    encoded_slices = [vae._encode(video_slice) for video_slice in videos.split(1)]
+                    video_latents = torch.cat(encoded_slices)
+
+                else:
+                    if args.save_image_latents:
+                        image_latents = vae._encode(images)
+                        image_latents = image_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
+
+                    video_latents = vae._encode(videos)
+
                 video_latents = video_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
 
                 # Encode prompts
