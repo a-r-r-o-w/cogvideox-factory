@@ -197,6 +197,7 @@ def log_validation(
 
     return videos
 
+
 class CollateFunction:
     def __init__(self, weight_dtype: torch.dtype, load_tensors: bool) -> None:
         self.weight_dtype = weight_dtype
