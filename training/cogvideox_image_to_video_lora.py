@@ -201,29 +201,6 @@ def log_validation(
     return videos
 
 class CollateFunction:
-    def __init__(self, weight_dtype, load_tensors):
-        self.weight_dtype = weight_dtype
-        self.load_tensors = load_tensors
-
-    def __call__(self, data):
-        prompts = [x["prompt"] for x in data[0]]
-
-        if self.load_tensors:
-            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
-
-        images = [x["image"] for x in data[0]]
-        images = torch.stack(images).to(dtype=self.weight_dtype, non_blocking=True)
-
-        videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
-
-        return {
-            "images": images,
-            "videos": videos,
-            "prompts": prompts,
-        }
-
-class CollateFunction:
     def __init__(self, weight_dtype: torch.dtype, load_tensors: bool) -> None:
         self.weight_dtype = weight_dtype
         self.load_tensors = load_tensors
@@ -547,7 +524,7 @@ def main(args):
         train_dataset,
         batch_size=1,
         sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
-        collate_fn=collate_fn_instance,
+        collate_fn=collate_fn,
         num_workers=args.dataloader_num_workers,
         pin_memory=args.pin_memory,
     )
