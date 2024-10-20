@@ -78,7 +78,7 @@ Before starting the training, please check whether the dataset has been prepared
   ```bash
   LEARNING_RATES=("1e-4" "1e-3")
   LR_SCHEDULES=("cosine_with_restarts")
-  OPTIMIZERS=("adamw", "adam")
+  OPTIMIZERS=("adamw" "adam")
   MAX_TRAIN_STEPS=("3000")
   ```
 
