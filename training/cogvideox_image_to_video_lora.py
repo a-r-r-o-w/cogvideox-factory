@@ -384,13 +384,15 @@ def main(args):
             transformer_lora_layers_to_save = None
 
             for model in models:
-                if isinstance(model, type(unwrap_model(transformer))):
+                if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
+                    model = unwrap_model(model)
                     transformer_lora_layers_to_save = get_peft_model_state_dict(model)
                 else:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
                 # make sure to pop weight so that corresponding model is not saved again
-                weights.pop()
+                if weights:
+                    weights.pop()
 
             CogVideoXImageToVideoPipeline.save_lora_weights(
                 output_dir,
@@ -400,13 +402,20 @@ def main(args):
     def load_model_hook(models, input_dir):
         transformer_ = None
 
-        while len(models) > 0:
-            model = models.pop()
+        # This is a bit of a hack but I don't know any other solution.
+        if not accelerator.distributed_type == DistributedType.DEEPSPEED:
+            while len(models) > 0:
+                model = models.pop()
 
-            if isinstance(model, type(unwrap_model(transformer))):
-                transformer_ = model
-            else:
-                raise ValueError(f"Unexpected save model: {model.__class__}")
+                if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
+                    transformer_ = unwrap_model(model)
+                else:
+                    raise ValueError(f"Unexpected save model: {unwrap_model(model).__class__}")
+        else:
+            transformer_ = CogVideoXTransformer3DModel.from_pretrained(
+                args.pretrained_model_name_or_path, subfolder="transformer"
+            )
+            transformer_.add_adapter(transformer_lora_config)
 
         lora_state_dict = CogVideoXImageToVideoPipeline.lora_state_dict(input_dir)
 
@@ -598,7 +607,7 @@ def main(args):
         if args.resume_from_checkpoint != "latest":
             path = os.path.basename(args.resume_from_checkpoint)
         else:
-            # Get the mos recent checkpoint
+            # Get the most recent checkpoint
             dirs = os.listdir(args.output_dir)
             dirs = [d for d in dirs if d.startswith("checkpoint")]
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
@@ -794,12 +803,15 @@ def main(args):
                         logger.info(f"Saved state to {save_path}")
 
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
-            logs = {
-                "loss": loss.detach().item(),
-                "lr": last_lr,
-                "gradient_norm_before_clip": gradient_norm_before_clip,
-                "gradient_norm_after_clip": gradient_norm_after_clip,
-            }
+            logs = {"loss": loss.detach().item(), "lr": last_lr}
+            # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
+            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+                logs.update(
+                    {
+                        "gradient_norm_before_clip": gradient_norm_before_clip,
+                        "gradient_norm_after_clip": gradient_norm_after_clip,
+                    }
+                )
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
