@@ -77,7 +77,7 @@ diffusers（该分支为 CogVideoX 的图像到视频添加了 LoRA 加载支持
   ```
   LEARNING_RATES=("1e-4" "1e-3")
   LR_SCHEDULES=("cosine_with_restarts")
-  OPTIMIZERS=("adamw", "adam")
+  OPTIMIZERS=("adamw" "adam")
   MAX_TRAIN_STEPS=("3000")
   ```
 

@@ -10,7 +10,7 @@ GPU_IDS="0"
 # Experiment with as many hyperparameters as you want!
 LEARNING_RATES=("1e-4" "1e-3")
 LR_SCHEDULES=("cosine_with_restarts")
-OPTIMIZERS=("adamw", "adam")
+OPTIMIZERS=("adamw" "adam")
 MAX_TRAIN_STEPS=("3000")
 
 # Single GPU uncompiled training
