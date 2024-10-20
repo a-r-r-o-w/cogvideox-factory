@@ -223,6 +223,30 @@ class CollateFunction:
             "prompts": prompts,
         }
 
+class CollateFunction:
+    def __init__(self, weight_dtype: torch.dtype, load_tensors: bool) -> None:
+        self.weight_dtype = weight_dtype
+        self.load_tensors = load_tensors
+
+    def __call__(self, data: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        prompts = [x["prompt"] for x in data[0]]
+
+        if self.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
+
+        images = [x["image"] for x in data[0]]
+        images = torch.stack(images).to(dtype=self.weight_dtype, non_blocking=True)
+
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
+
+        return {
+            "images": images,
+            "videos": videos,
+            "prompts": prompts,
+        }
+
+
 def main(args):
     if args.report_to == "wandb" and args.hub_token is not None:
         raise ValueError(
@@ -382,13 +406,15 @@ def main(args):
             transformer_lora_layers_to_save = None
 
             for model in models:
-                if isinstance(model, type(unwrap_model(transformer))):
+                if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
+                    model = unwrap_model(model)
                     transformer_lora_layers_to_save = get_peft_model_state_dict(model)
                 else:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
                 # make sure to pop weight so that corresponding model is not saved again
-                weights.pop()
+                if weights:
+                    weights.pop()
 
             CogVideoXImageToVideoPipeline.save_lora_weights(
                 output_dir,
@@ -398,13 +424,20 @@ def main(args):
     def load_model_hook(models, input_dir):
         transformer_ = None
 
-        while len(models) > 0:
-            model = models.pop()
+        # This is a bit of a hack but I don't know any other solution.
+        if not accelerator.distributed_type == DistributedType.DEEPSPEED:
+            while len(models) > 0:
+                model = models.pop()
 
-            if isinstance(model, type(unwrap_model(transformer))):
-                transformer_ = model
-            else:
-                raise ValueError(f"Unexpected save model: {model.__class__}")
+                if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
+                    transformer_ = unwrap_model(model)
+                else:
+                    raise ValueError(f"Unexpected save model: {unwrap_model(model).__class__}")
+        else:
+            transformer_ = CogVideoXTransformer3DModel.from_pretrained(
+                args.pretrained_model_name_or_path, subfolder="transformer"
+            )
+            transformer_.add_adapter(transformer_lora_config)
 
         lora_state_dict = CogVideoXImageToVideoPipeline.lora_state_dict(input_dir)
 
@@ -508,7 +541,7 @@ def main(args):
             video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
         )
 
-    collate_fn_instance = CollateFunction(weight_dtype, args.load_tensors)
+    collate_fn = CollateFunction(weight_dtype, args.load_tensors)
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -521,7 +554,7 @@ def main(args):
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -558,7 +591,7 @@ def main(args):
     )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
@@ -580,6 +613,7 @@ def main(args):
     accelerator.print("***** Running training *****")
     accelerator.print(f"  Num trainable parameters = {num_trainable_parameters}")
     accelerator.print(f"  Num examples = {len(train_dataset)}")
+    accelerator.print(f"  Num batches each epoch = {len(train_dataloader)}")
     accelerator.print(f"  Num epochs = {args.num_train_epochs}")
     accelerator.print(f"  Instantaneous batch size per device = {args.train_batch_size}")
     accelerator.print(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -595,7 +629,7 @@ def main(args):
         if args.resume_from_checkpoint != "latest":
             path = os.path.basename(args.resume_from_checkpoint)
         else:
-            # Get the mos recent checkpoint
+            # Get the most recent checkpoint
             dirs = os.listdir(args.output_dir)
             dirs = [d for d in dirs if d.startswith("checkpoint")]
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
@@ -791,12 +825,15 @@ def main(args):
                         logger.info(f"Saved state to {save_path}")
 
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
-            logs = {
-                "loss": loss.detach().item(),
-                "lr": last_lr,
-                "gradient_norm_before_clip": gradient_norm_before_clip,
-                "gradient_norm_after_clip": gradient_norm_after_clip,
-            }
+            logs = {"loss": loss.detach().item(), "lr": last_lr}
+            # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
+            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+                logs.update(
+                    {
+                        "gradient_norm_before_clip": gradient_norm_before_clip,
+                        "gradient_norm_after_clip": gradient_norm_after_clip,
+                    }
+                )
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
