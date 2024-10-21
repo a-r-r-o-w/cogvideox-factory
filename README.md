@@ -12,7 +12,7 @@ Fine-tune Cog family of video models for custom video generation under 24GB of G
 
 ## Quickstart
 
-Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt` and install diffusers from source by `pip install git+https://github.com/huggingface/diffusers`.
+Clone the repository and make sure the required packages are installed: `pip install -r requirements.txt` and install diffusers from source by `pip install git+https://github.com/huggingface/diffusers`.
 
 Then download a dataset:
 
@@ -53,7 +53,7 @@ video = pipe("<my-awesome-prompt>").frames[0]
 export_to_video(video, "output.mp4", fps=8)
 ```
 
-**Note:** For Image-to-Video finetuning, you must install diffusers from [this](https://github.com/huggingface/diffusers/pull/9482) branch (which adds lora loading support in CogVideoX image-to-video) until it is merged.
+**Note:** For Image-to-Video finetuning, you must install diffusers from [this](https://github.com/huggingface/diffusers/pull/9482) branch (which adds LoRA loading support in CogVideoX image-to-video) until it is merged.
 
 Below we provide additional sections detailing on more options explored in this repository. They all attempt to make fine-tuning for video models as accessible as possible by reducing memory requirements as much as possible.
 
@@ -73,7 +73,7 @@ Before starting the training, please check whether the dataset has been prepared
 
 - Configure which GPUs to use for training: `GPU_IDS="0,1"`
 
-- Choose hyperparameters for training. Let's try to do a sweep on learning rate and optimizer type as an example:
+- Choose hyperparameters for training. Let’s conduct a sweep on the learning rate and optimizer type as an example:
 
   ```bash
   LEARNING_RATES=("1e-4" "1e-3")
@@ -196,7 +196,7 @@ Supported and verified memory optimizations for training include:
 ### LoRA finetuning
 
 > [!NOTE]
-> The memory requirements for image-to-video lora finetuning are similar to that of text-to-video on `THUDM/CogVideoX-5b`, so it hasn't been reported explicitly.
+> The memory requirements for image-to-video LoRA finetuning are similar to that of text-to-video on `THUDM/CogVideoX-5b`, so it hasn't been reported explicitly.
 >
 > Additionally, to prepare test images for I2V finetuning, you could either generate them on-the-fly by modifying the script, or extract some frames from your training data using:
 > `ffmpeg -i input.mp4 -frames:v 1 frame.png`,
@@ -209,7 +209,7 @@ Supported and verified memory optimizations for training include:
 
 With `train_batch_size = 1`:
 
-|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|       model        | LoRA rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
 | THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.764          |         46.918          |       24.234         |
 | THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.121          |       24.234         |
@@ -223,7 +223,7 @@ With `train_batch_size = 1`:
 
 With `train_batch_size = 4`:
 
-|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|       model        | LoRA rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
 | THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.803          |         21.814          |       24.322         |
 | THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          22.254          |         22.254          |       24.572         |
@@ -241,7 +241,7 @@ With `train_batch_size = 4`:
 
 With `train_batch_size = 1`:
 
-|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|       model        | LoRA rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
 | THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.732          |         46.887          |        24.195        |
 | THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.430          |        24.195        |
@@ -255,7 +255,7 @@ With `train_batch_size = 1`:
 
 With `train_batch_size = 4`:
 
-|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|       model        | LoRA rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
 | THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.734          |         21.775          |       24.281         |
 | THUDM/CogVideoX-2b |    64     |          True          |         13.036         |          21.941          |         21.941          |       24.445         |
@@ -273,7 +273,7 @@ With `train_batch_size = 4`:
 
 With `train_batch_size = 1`:
 
-|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|       model        | LoRA rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
 | THUDM/CogVideoX-2b |    16     |          False         |         12.945         |          43.705          |         46.859          |       24.180         |
 | THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          12.945          |         21.395          |       24.180         |
@@ -287,7 +287,7 @@ With `train_batch_size = 1`:
 
 With `train_batch_size = 4`:
 
-|       model        | lora rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
+|       model        | LoRA rank | gradient_checkpointing | memory_before_training | memory_before_validation | memory_after_validation | memory_after_testing |
 |:------------------:|:---------:|:----------------------:|:----------------------:|:------------------------:|:-----------------------:|:--------------------:|
 | THUDM/CogVideoX-2b |    16     |          True          |         12.945         |          21.709          |         21.762          |       24.254         |
 | THUDM/CogVideoX-2b |    64     |          True          |         13.035         |          21.844          |         21.855          |       24.338         |
@@ -410,7 +410,7 @@ With `train_batch_size = 4`:
 </details>
 
 > [!NOTE]
-> - `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose not to perform validation/testing as part of the training script.
+> - `memory_after_validation` is indicative of the peak memory required for training. This is because, apart from the activations, parameters, and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose not to perform validation/testing as part of the training script.
 >
 > - `memory_before_validation` is the true indicator of the peak memory required for training if you choose to not perform validation/testing.
 
