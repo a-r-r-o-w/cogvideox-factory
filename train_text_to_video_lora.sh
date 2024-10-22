@@ -66,6 +66,8 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --lr_num_cycles 1 \
           --enable_slicing \
           --enable_tiling \
+          --enable_model_cpu_offload \
+          --load_tensors \
           --optimizer $optimizer \
           --beta1 0.9 \
           --beta2 0.95 \
