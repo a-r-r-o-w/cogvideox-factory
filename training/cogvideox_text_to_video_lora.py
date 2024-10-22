@@ -25,6 +25,7 @@ from typing import Any, Dict
 import diffusers
 import torch
 import transformers
+import wandb
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -50,8 +51,6 @@ from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dic
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
-
-import wandb
 
 
 from args import get_args  # isort:skip
@@ -197,6 +196,26 @@ def log_validation(
             )
 
     return videos
+
+
+class CollateFunction:
+    def __init__(self, weight_dtype: torch.dtype, load_tensors: bool) -> None:
+        self.weight_dtype = weight_dtype
+        self.load_tensors = load_tensors
+
+    def __call__(self, data: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        prompts = [x["prompt"] for x in data[0]]
+
+        if self.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
+
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
+
+        return {
+            "videos": videos,
+            "prompts": prompts,
+        }
 
 
 def main(args):
@@ -358,13 +377,15 @@ def main(args):
             transformer_lora_layers_to_save = None
 
             for model in models:
-                if isinstance(model, type(unwrap_model(transformer))):
+                if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
+                    model = unwrap_model(model)
                     transformer_lora_layers_to_save = get_peft_model_state_dict(model)
                 else:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
                 # make sure to pop weight so that corresponding model is not saved again
-                weights.pop()
+                if weights:
+                    weights.pop()
 
             CogVideoXPipeline.save_lora_weights(
                 output_dir,
@@ -374,13 +395,20 @@ def main(args):
     def load_model_hook(models, input_dir):
         transformer_ = None
 
-        while len(models) > 0:
-            model = models.pop()
+        # This is a bit of a hack but I don't know any other solution.
+        if not accelerator.distributed_type == DistributedType.DEEPSPEED:
+            while len(models) > 0:
+                model = models.pop()
 
-            if isinstance(model, type(unwrap_model(transformer))):
-                transformer_ = model
-            else:
-                raise ValueError(f"Unexpected save model: {model.__class__}")
+                if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
+                    transformer_ = unwrap_model(model)
+                else:
+                    raise ValueError(f"Unexpected save model: {unwrap_model(model).__class__}")
+        else:
+            transformer_ = CogVideoXTransformer3DModel.from_pretrained(
+                args.pretrained_model_name_or_path, subfolder="transformer"
+            )
+            transformer_.add_adapter(transformer_lora_config)
 
         lora_state_dict = CogVideoXPipeline.lora_state_dict(input_dir)
 
@@ -483,19 +511,7 @@ def main(args):
             video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
         )
 
-    def collate_fn(data):
-        prompts = [x["prompt"] for x in data[0]]
-
-        if args.load_tensors:
-            prompts = torch.stack(prompts).to(dtype=weight_dtype, non_blocking=True)
-
-        videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(dtype=weight_dtype, non_blocking=True)
-
-        return {
-            "videos": videos,
-            "prompts": prompts,
-        }
+    collate_fn = CollateFunction(weight_dtype, args.load_tensors)
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -553,7 +569,7 @@ def main(args):
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
-    if accelerator.is_main_process:
+    if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
         tracker_name = args.tracker_name or "cogvideox-lora"
         accelerator.init_trackers(tracker_name, config=vars(args))
 
@@ -583,7 +599,7 @@ def main(args):
         if args.resume_from_checkpoint != "latest":
             path = os.path.basename(args.resume_from_checkpoint)
         else:
-            # Get the mos recent checkpoint
+            # Get the most recent checkpoint
             dirs = os.listdir(args.output_dir)
             dirs = [d for d in dirs if d.startswith("checkpoint")]
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
@@ -731,7 +747,7 @@ def main(args):
                 progress_bar.update(1)
                 global_step += 1
 
-                if accelerator.is_main_process or accelerator.distributed_type == DistributedType.DEEPSPEED:
+                if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
                     if global_step % args.checkpointing_steps == 0:
                         # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                         if args.checkpoints_total_limit is not None:
@@ -758,12 +774,15 @@ def main(args):
                         logger.info(f"Saved state to {save_path}")
 
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
-            logs = {
-                "loss": loss.detach().item(),
-                "lr": last_lr,
-                "gradient_norm_before_clip": gradient_norm_before_clip,
-                "gradient_norm_after_clip": gradient_norm_after_clip,
-            }
+            logs = {"loss": loss.detach().item(), "lr": last_lr}
+            # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
+            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+                logs.update(
+                    {
+                        "gradient_norm_before_clip": gradient_norm_before_clip,
+                        "gradient_norm_after_clip": gradient_norm_after_clip,
+                    }
+                )
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 

@@ -12,7 +12,7 @@ Fine-tune Cog family of video models for custom video generation under 24GB of G
 
 ## Quickstart
 
-Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt`.
+Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt` and install diffusers from source by `pip install git+https://github.com/huggingface/diffusers`.
 
 Then download a dataset:
 
@@ -80,7 +80,7 @@ Before starting the training, please check whether the dataset has been prepared
   ```bash
   LEARNING_RATES=("1e-4" "1e-3")
   LR_SCHEDULES=("cosine_with_restarts")
-  OPTIMIZERS=("adamw", "adam")
+  OPTIMIZERS=("adamw" "adam")
   MAX_TRAIN_STEPS=("3000")
   ```
 
