@@ -19,6 +19,7 @@ fi
 
 # Video captioning configuration
 OLLAMA_MODEL="llama3.1:latest"
+# "crown/darkidol:latest"
 DATA_ROOT="./datasets/$ID_TOKEN"
 DATASET_FILE="./datasets/${ID_TOKEN}_output.csv"
 DATA_ROOT_TRAIN="./datasets/${ID_TOKEN}_prepared"
@@ -104,10 +105,7 @@ train_model() {
             --data_root $DATA_ROOT_TRAIN \
             --caption_column $CAPTION_COLUMN_TRAIN \
             --video_column $VIDEO_COLUMN_TRAIN \
-            --gradient_checkpointing \
-            --enable_tiling \
-            --enable_slicing \
-            --id_token $ID_TOKEN, \
+            --id_token $ID_TOKEN \
             --seed 42 \
             --rank 128 \
             --lora_alpha 32 \
@@ -125,7 +123,6 @@ train_model() {
             --gradient_accumulation_steps 1 \
             --max_train_steps $steps \
             --checkpointing_steps 1000 \
-            --gradient_accumulation_steps 1 \
             --gradient_checkpointing \
             --learning_rate $learning_rate \
             --lr_scheduler $lr_schedule \
@@ -133,7 +130,6 @@ train_model() {
             --lr_num_cycles 1 \
             --enable_slicing \
             --enable_tiling \
-            --gradient_checkpointing \
             --optimizer $optimizer \
             --max_grad_norm 1.0 \
             --resume_from_checkpoint latest"
