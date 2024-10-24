@@ -19,7 +19,6 @@ fi
 
 # Video captioning configuration
 OLLAMA_MODEL="llama3.1:latest"
-# "crown/darkidol:latest"
 DATA_ROOT="./datasets/$ID_TOKEN"
 DATASET_FILE="./datasets/${ID_TOKEN}_output.csv"
 DATA_ROOT_TRAIN="./datasets/${ID_TOKEN}_prepared"
@@ -38,7 +37,7 @@ MAX_NUM_FRAMES="49"
 MAX_SEQUENCE_LENGTH=226
 TARGET_FPS=8
 BATCH_SIZE=1
-DTYPE=fp16
+DTYPE="fp16"
 
 # Training configuration
 GPU_IDS="0"
@@ -108,7 +107,7 @@ train_model() {
             --id_token $ID_TOKEN \
             --seed 42 \
             --rank 128 \
-            --lora_alpha 32 \
+            --lora_alpha 128 \
             --mixed_precision $DTYPE_TRAIN \
             --output_dir $output_dir \
             --height 480 \
@@ -131,8 +130,14 @@ train_model() {
             --enable_slicing \
             --enable_tiling \
             --optimizer $optimizer \
+            --resume_from_checkpoint latest \
+            --noised_image_dropout 0.05 \
+            --beta1 0.9 \
+            --beta2 0.95 \
+            --weight_decay 0.001 \
             --max_grad_norm 1.0 \
-            --resume_from_checkpoint latest"
+            --allow_tf32 \
+            --nccl_timeout 1800"
           
           echo "Running command: $cmd"
           eval $cmd
