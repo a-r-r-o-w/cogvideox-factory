@@ -41,7 +41,7 @@ Assuming your LoRA is saved and pushed to the HF Hub, and named `my-awesome-name
 ```diff
 import torch
 from diffusers import CogVideoXPipeline
-from diffusers import export_to_video
+from diffusers.utils import export_to_video
 
 pipe = CogVideoXPipeline.from_pretrained(
     "THUDM/CogVideoX-5b", torch_dtype=torch.bfloat16
