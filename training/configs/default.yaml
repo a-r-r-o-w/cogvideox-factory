@@ -1,0 +1,81 @@
+pretrained_model_name_or_path: null  # Required
+revision: null
+variant: null
+cache_dir: null
+
+data_root: null
+dataset_file: null
+video_column: "video"
+caption_column: "text"
+id_token: null
+height_buckets: [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
+width_buckets: [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
+frame_buckets: [49]
+load_tensors: false
+random_flip: null
+dataloader_num_workers: 0
+pin_memory: false
+
+seed: null
+rank: 64
+lora_alpha: 64
+mixed_precision: null
+output_dir: "cogvideox-sft"
+height: 480
+width: 720
+video_reshape_mode: null
+fps: 8
+max_num_frames: 49
+skip_frames_start: 0
+skip_frames_end: 0
+train_batch_size: 4
+num_train_epochs: 1
+max_train_steps: null
+checkpointing_steps: 500
+checkpoints_total_limit: null
+resume_from_checkpoint: null
+gradient_accumulation_steps: 1
+gradient_checkpointing: false
+learning_rate: 1e-4
+scale_lr: false
+lr_scheduler: "constant"
+lr_warmup_steps: 500
+lr_num_cycles: 1
+lr_power: 1.0
+enable_slicing: false
+enable_tiling: false
+noised_image_dropout: 0.05
+
+optimizer: "adam"
+use_8bit: false
+use_4bit: false
+use_torchao: false
+beta1: 0.9
+beta2: 0.95
+beta3: null
+prodigy_decouple: false
+weight_decay: 1e-4
+epsilon: 1e-8
+max_grad_norm: 1.0
+prodigy_use_bias_correction: false
+prodigy_safeguard_warmup: false
+use_cpu_offload_optimizer: false
+offload_gradients: false
+
+validation_prompt: null
+validation_images: null
+validation_prompt_separator: ":::"
+num_validation_videos: 1
+validation_epochs: 50
+guidance_scale: 6.0
+use_dynamic_cfg: false
+enable_model_cpu_offload: false
+
+tracker_name: null
+push_to_hub: false
+hub_token: null
+hub_model_id: null
+logging_dir: "logs"
+allow_tf32: false
+nccl_timeout: 600
+report_to: null
