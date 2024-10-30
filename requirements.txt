@@ -9,7 +9,7 @@ decord>=0.6.0
 wandb
 pandas
 torch<2.5.0
-torchvision>=0.20.0
+torchvision<0.20.0
 torchao>=0.5.0
 sentencepiece>=0.2.0
 imageio-ffmpeg>=0.5.1
