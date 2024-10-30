@@ -53,6 +53,8 @@ video = pipe("<my-awesome-prompt>").frames[0]
 export_to_video(video, "output.mp4", fps=8)
 ```
 
+You can also check if your LoRA is correctly mounted [here](tests/test_lora_inference.py).
+
 **Note:** For Image-to-Video finetuning, you must install diffusers from [this](https://github.com/huggingface/diffusers/pull/9482) branch (which adds lora loading support in CogVideoX image-to-video) until it is merged.
 
 Below we provide additional sections detailing on more options explored in this repository. They all attempt to make fine-tuning for video models as accessible as possible by reducing memory requirements as much as possible.

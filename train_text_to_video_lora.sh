@@ -20,18 +20,22 @@ ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_1.yaml"
 # This example assumes you downloaded an already prepared dataset from HF CLI as follows:
 #   huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir /path/to/my/datasets/disney-dataset
 DATA_ROOT="/path/to/my/datasets/disney-dataset"
+
 CAPTION_COLUMN="prompt.txt"
 VIDEO_COLUMN="videos.txt"
+MODEL_PATH="THUDM/CogVideoX-5b"
 
+# Set ` --load_tensors ` to load tensors from disk instead of recomputing the encoder process.
 # Launch experiments with different hyperparameters
+
 for learning_rate in "${LEARNING_RATES[@]}"; do
   for lr_schedule in "${LR_SCHEDULES[@]}"; do
     for optimizer in "${OPTIMIZERS[@]}"; do
       for steps in "${MAX_TRAIN_STEPS[@]}"; do
-        output_dir="/path/to/my/models/cogvideox-lora__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
+        output_dir="./cogvideox-lora__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
         cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox_text_to_video_lora.py \
-          --pretrained_model_name_or_path THUDM/CogVideoX-5b \
+          --pretrained_model_name_or_path $MODEL_PATH \
           --data_root $DATA_ROOT \
           --caption_column $CAPTION_COLUMN \
           --video_column $VIDEO_COLUMN \
@@ -62,6 +66,8 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --lr_num_cycles 1 \
           --enable_slicing \
           --enable_tiling \
+          --enable_model_cpu_offload \
+          --load_tensors \
           --optimizer $optimizer \
           --beta1 0.9 \
           --beta2 0.95 \
