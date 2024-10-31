@@ -1,6 +1,6 @@
 # CogVideoX Factory 🧪
 
-[中文阅读](./README_zh.md)
+[中文阅读](./README_zh.md) | [中文閱讀](./README_zh_TW.md)
 
 Fine-tune Cog family of video models for custom video generation under 24GB of GPU memory ⚡️📼
 
