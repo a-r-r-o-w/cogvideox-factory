@@ -45,7 +45,6 @@ from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params
 from diffusers.utils import convert_unet_state_dict_to_peft, export_to_video
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
-from diffusers.utils.torch_utils import is_compiled_module
 from huggingface_hub import create_repo, upload_folder
 from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dict
 from torch.utils.data import DataLoader
@@ -56,7 +55,14 @@ from transformers import AutoTokenizer, T5EncoderModel
 from args import get_args  # isort:skip
 from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
-from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings, print_memory, reset_memory  # isort:skip
+from utils import (
+    get_gradient_norm,
+    get_optimizer,
+    prepare_rotary_positional_embeddings,
+    print_memory,
+    reset_memory,
+    unwrap_model,
+)  # isort:skip
 
 
 logger = get_logger(__name__)
@@ -346,19 +352,14 @@ def main(args):
     )
     transformer.add_adapter(transformer_lora_config)
 
-    def unwrap_model(model):
-        model = accelerator.unwrap_model(model)
-        model = model._orig_mod if is_compiled_module(model) else model
-        return model
-
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
     def save_model_hook(models, weights, output_dir):
         if accelerator.is_main_process:
             transformer_lora_layers_to_save = None
 
             for model in models:
-                if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
-                    model = unwrap_model(model)
+                if isinstance(unwrap_model(accelerator, model), type(unwrap_model(accelerator, transformer))):
+                    model = unwrap_model(accelerator, model)
                     transformer_lora_layers_to_save = get_peft_model_state_dict(model)
                 else:
                     raise ValueError(f"unexpected save model: {model.__class__}")
@@ -380,10 +381,10 @@ def main(args):
             while len(models) > 0:
                 model = models.pop()
 
-                if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
-                    transformer_ = unwrap_model(model)
+                if isinstance(unwrap_model(accelerator, model), type(unwrap_model(accelerator, transformer))):
+                    transformer_ = unwrap_model(accelerator, model)
                 else:
-                    raise ValueError(f"Unexpected save model: {unwrap_model(model).__class__}")
+                    raise ValueError(f"Unexpected save model: {unwrap_model(accelerator, model).__class__}")
         else:
             transformer_ = CogVideoXTransformer3DModel.from_pretrained(
                 args.pretrained_model_name_or_path, subfolder="transformer"
@@ -789,7 +790,7 @@ def main(args):
 
                 pipe = CogVideoXPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
-                    transformer=unwrap_model(transformer),
+                    transformer=unwrap_model(accelerator, transformer),
                     scheduler=scheduler,
                     revision=args.revision,
                     variant=args.variant,
@@ -834,7 +835,7 @@ def main(args):
     accelerator.wait_for_everyone()
 
     if accelerator.is_main_process:
-        transformer = unwrap_model(transformer)
+        transformer = unwrap_model(accelerator, transformer)
         dtype = (
             torch.float16
             if args.mixed_precision == "fp16"
