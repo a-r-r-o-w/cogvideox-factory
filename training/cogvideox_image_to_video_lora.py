@@ -46,18 +46,23 @@ from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params
 from diffusers.utils import convert_unet_state_dict_to_peft, export_to_video, load_image
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
-from diffusers.utils.torch_utils import is_compiled_module
 from huggingface_hub import create_repo, upload_folder
 from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dict
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
 
-
 from args import get_args  # isort:skip
 from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
-from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings, print_memory, reset_memory  # isort:skip
+from utils import (
+    get_gradient_norm,
+    get_optimizer,
+    prepare_rotary_positional_embeddings,
+    print_memory,
+    reset_memory,
+    unwrap_model,
+)
 
 
 logger = get_logger(__name__)
@@ -280,12 +285,6 @@ class CollateFunction:
             "videos": videos,
             "prompts": prompts,
         }
-
-
-def unwrap_model(accelerator: Accelerator, model):
-    model = accelerator.unwrap_model(model)
-    model = model._orig_mod if is_compiled_module(model) else model
-    return model
 
 
 def main(args):
