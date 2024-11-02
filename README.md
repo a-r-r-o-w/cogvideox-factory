@@ -12,7 +12,7 @@ Fine-tune Cog family of video models for custom video generation under 24GB of G
 
 ## Quickstart
 
-Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt`.
+Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt` and install diffusers from source by `pip install git+https://github.com/huggingface/diffusers`.
 
 Then download a dataset:
 
@@ -41,7 +41,7 @@ Assuming your LoRA is saved and pushed to the HF Hub, and named `my-awesome-name
 ```diff
 import torch
 from diffusers import CogVideoXPipeline
-from diffusers import export_to_video
+from diffusers.utils import export_to_video
 
 pipe = CogVideoXPipeline.from_pretrained(
     "THUDM/CogVideoX-5b", torch_dtype=torch.bfloat16
@@ -69,6 +69,8 @@ pipe.transformer.patch_embed.use_learned_positional_embeddings = False
 pipe.transformer.config.use_learned_positional_embeddings = False
 ```
 
+You can also check if your LoRA is correctly mounted [here](tests/test_lora_inference.py).
+
 Below we provide additional sections detailing on more options explored in this repository. They all attempt to make fine-tuning for video models as accessible as possible by reducing memory requirements as much as possible.
 
 ## Prepare Dataset and Training
@@ -92,7 +94,7 @@ Before starting the training, please check whether the dataset has been prepared
   ```bash
   LEARNING_RATES=("1e-4" "1e-3")
   LR_SCHEDULES=("cosine_with_restarts")
-  OPTIMIZERS=("adamw", "adam")
+  OPTIMIZERS=("adamw" "adam")
   MAX_TRAIN_STEPS=("3000")
   ```
 
