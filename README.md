@@ -53,7 +53,21 @@ video = pipe("<my-awesome-prompt>").frames[0]
 export_to_video(video, "output.mp4", fps=8)
 ```
 
-**Note:** For Image-to-Video finetuning, you must install diffusers from [this](https://github.com/huggingface/diffusers/pull/9482) branch (which adds lora loading support in CogVideoX image-to-video) until it is merged.
+For Image-to-Video LoRAs trained with multiresolution videos, one must also add the following lines (see [this](https://github.com/a-r-r-o-w/cogvideox-factory/issues/26) Issue for more details):
+
+```python
+from diffusers import CogVideoXImageToVideoPipeline
+
+pipe = CogVideoXImageToVideoPipeline.from_pretrained(
+    "THUDM/CogVideoX-5b-I2V", torch_dtype=torch.bfloat16
+).to("cuda")
+
+# ...
+
+del pipe.transformer.patch_embed.pos_embedding
+pipe.transformer.patch_embed.use_learned_positional_embeddings = False
+pipe.transformer.config.use_learned_positional_embeddings = False
+```
 
 Below we provide additional sections detailing on more options explored in this repository. They all attempt to make fine-tuning for video models as accessible as possible by reducing memory requirements as much as possible.
 

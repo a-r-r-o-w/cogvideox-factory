@@ -371,6 +371,7 @@ def main(args):
         variant=args.variant,
     )
 
+    # These changes will also be required when trying to run inference with the trained lora
     if args.ignore_learned_positional_embeddings:
         del transformer.patch_embed.pos_embedding
         transformer.patch_embed.use_learned_positional_embeddings = False
