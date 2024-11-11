@@ -18,7 +18,7 @@ The framework supports resolutions and frame counts that meet the following cond
     - Any resolution as long as it is divisible by 32. For example, `720 * 480`, `1920 * 1020`, etc.
 
 - **Supported Frame Counts (Frames)**:
-    - Must satisfy (4K + 1), i.e., multiples of 4 such as 16, 24, 32, 48, 64, 80.
+    - Must be `4 * k` or `4 * k + 1` (example: 16, 32, 49, 81)
 
 It is recommended to place all videos in a single folder.
 
@@ -58,4 +58,4 @@ huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-D
 
 This dataset has been prepared in the expected format and can be used directly. However, directly using the video dataset may cause Out of Memory (OOM) issues on GPUs with smaller VRAM because it requires loading the [VAE](https://huggingface.co/THUDM/CogVideoX-5b/tree/main/vae) (which encodes videos into latent space) and the large [T5-XXL](https://huggingface.co/google/t5-v1_1-xxl/) text encoder. To reduce memory usage, you can use the `training/prepare_dataset.py` script to precompute latents and embeddings.
 
-Fill or modify the parameters in `prepare_dataset.sh` and execute it to get precomputed latents and embeddings (make sure to specify `--save_tensors` to save the precomputed artifacts). When using these artifacts during training, ensure that you specify the `--load_tensors` flag, or else the videos will be used directly, requiring the text encoder and VAE to be loaded. The script also supports PyTorch DDP so that large datasets can be encoded in parallel across multiple GPUs (modify the `NUM_GPUS` parameter).
+Fill or modify the parameters in `prepare_dataset.sh` and execute it to get precomputed latents and embeddings (make sure to specify `--save_latents_and_embeddings` to save the precomputed artifacts). If preparing for image-to-video training, make sure to pass `--save_image_latents`, which encodes and saves image latents along with videos. When using these artifacts during training, ensure that you specify the `--load_tensors` flag, or else the videos will be used directly, requiring the text encoder and VAE to be loaded. The script also supports PyTorch DDP so that large datasets can be encoded in parallel across multiple GPUs (modify the `NUM_GPUS` parameter).

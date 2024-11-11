@@ -12,7 +12,7 @@ Fine-tune Cog family of video models for custom video generation under 24GB of G
 
 ## Quickstart
 
-Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt`.
+Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt` and install diffusers from source by `pip install git+https://github.com/huggingface/diffusers`.
 
 Then download a dataset:
 
@@ -41,19 +41,35 @@ Assuming your LoRA is saved and pushed to the HF Hub, and named `my-awesome-name
 ```diff
 import torch
 from diffusers import CogVideoXPipeline
-from diffusers import export_to_video
+from diffusers.utils import export_to_video
 
 pipe = CogVideoXPipeline.from_pretrained(
     "THUDM/CogVideoX-5b", torch_dtype=torch.bfloat16
 ).to("cuda")
-+ pipe.load_lora_weights("my-awesome-name/my-awesome-lora", adapter_name=["cogvideox-lora"])
++ pipe.load_lora_weights("my-awesome-name/my-awesome-lora", adapter_name="cogvideox-lora")
 + pipe.set_adapters(["cogvideox-lora"], [1.0])
 
 video = pipe("<my-awesome-prompt>").frames[0]
 export_to_video(video, "output.mp4", fps=8)
 ```
 
-**Note:** For Image-to-Video finetuning, you must install diffusers from [this](https://github.com/huggingface/diffusers/pull/9482) branch (which adds lora loading support in CogVideoX image-to-video) until it is merged.
+For Image-to-Video LoRAs trained with multiresolution videos, one must also add the following lines (see [this](https://github.com/a-r-r-o-w/cogvideox-factory/issues/26) Issue for more details):
+
+```python
+from diffusers import CogVideoXImageToVideoPipeline
+
+pipe = CogVideoXImageToVideoPipeline.from_pretrained(
+    "THUDM/CogVideoX-5b-I2V", torch_dtype=torch.bfloat16
+).to("cuda")
+
+# ...
+
+del pipe.transformer.patch_embed.pos_embedding
+pipe.transformer.patch_embed.use_learned_positional_embeddings = False
+pipe.transformer.config.use_learned_positional_embeddings = False
+```
+
+You can also check if your LoRA is correctly mounted [here](tests/test_lora_inference.py).
 
 Below we provide additional sections detailing on more options explored in this repository. They all attempt to make fine-tuning for video models as accessible as possible by reducing memory requirements as much as possible.
 
@@ -61,7 +77,7 @@ Below we provide additional sections detailing on more options explored in this 
 
 Before starting the training, please check whether the dataset has been prepared according to the [dataset specifications](assets/dataset.md). We provide training scripts suitable for text-to-video and image-to-video generation, compatible with the [CogVideoX model family](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce). Training can be started using the `train*.sh` scripts, depending on the task you want to train. Let's take LoRA fine-tuning for text-to-video as an example.
 
-- Configure environment variables according as per your choice:
+- Configure environment variables as per your choice:
 
   ```bash
   export TORCH_LOGS="+dynamo,recompiles,graph_breaks"
@@ -78,7 +94,7 @@ Before starting the training, please check whether the dataset has been prepared
   ```bash
   LEARNING_RATES=("1e-4" "1e-3")
   LR_SCHEDULES=("cosine_with_restarts")
-  OPTIMIZERS=("adamw", "adam")
+  OPTIMIZERS=("adamw" "adam")
   MAX_TRAIN_STEPS=("3000")
   ```
 
@@ -184,7 +200,7 @@ Note: Training scripts are untested on MPS, so performance and memory requiremen
 
 Supported and verified memory optimizations for training include:
 
-- `CPUOffloadOptimizer` from [`torchao`](https://github.com/pytorch/ao). You can read about its capabilities and limitations [here](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload). In short, it allows you to use the CPU for storing trainable parameters and gradients. This results in the optimizer step happening on the CPU, which requires a fast CPU optimizer, such as `torch.optim.AdamW(fused=True)` or applying `torch.compile` on the optimizer step. Additionally, it is recommended to not `torch.compile` your model for training. Gradient clipping and accumulation is not supported yet either.
+- `CPUOffloadOptimizer` from [`torchao`](https://github.com/pytorch/ao). You can read about its capabilities and limitations [here](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim#optimizer-cpu-offload). In short, it allows you to use the CPU for storing trainable parameters and gradients. This results in the optimizer step happening on the CPU, which requires a fast CPU optimizer, such as `torch.optim.AdamW(fused=True)` or applying `torch.compile` on the optimizer step. Additionally, it is recommended not to `torch.compile` your model for training. Gradient clipping and accumulation is not supported yet either.
 - Low-bit optimizers from [`bitsandbytes`](https://huggingface.co/docs/bitsandbytes/optimizers). TODO: to test and make [`torchao`](https://github.com/pytorch/ao/tree/main/torchao/prototype/low_bit_optim) ones work
 - DeepSpeed Zero2: Since we rely on `accelerate`, follow [this guide](https://huggingface.co/docs/accelerate/en/usage_guides/deepspeed) to configure your `accelerate` installation to enable training with DeepSpeed Zero2 optimizations. 
 
@@ -410,7 +426,7 @@ With `train_batch_size = 4`:
 </details>
 
 > [!NOTE]
-> - `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose to not perform validation/testing as part of the training script.
+> - `memory_after_validation` is indicative of the peak memory required for training. This is because apart from the activations, parameters and gradients stored for training, you also need to load the vae and text encoder in memory and spend some memory to perform inference. In order to reduce total memory required to perform training, one can choose not to perform validation/testing as part of the training script.
 >
 > - `memory_before_validation` is the true indicator of the peak memory required for training if you choose to not perform validation/testing.
 
@@ -429,7 +445,7 @@ With `train_batch_size = 4`:
 - [ ] Make scripts compatible with FSDP
 - [x] Make scripts compatible with DeepSpeed
 - [ ] vLLM-powered captioning script
-- [ ] Multi-resolution/frame support in `prepare_dataset.py`
+- [x] Multi-resolution/frame support in `prepare_dataset.py`
 - [ ] Analyzing traces for potential speedups and removing as many syncs as possible
 - [ ] Support for QLoRA (priority), and other types of high usage LoRAs methods
 - [x] Test scripts with memory-efficient optimizer from bitsandbytes

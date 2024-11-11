@@ -46,7 +46,6 @@ from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params
 from diffusers.utils import convert_unet_state_dict_to_peft, export_to_video, load_image
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
-from diffusers.utils.torch_utils import is_compiled_module
 from huggingface_hub import create_repo, upload_folder
 from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dict
 from torch.utils.data import DataLoader
@@ -57,7 +56,14 @@ from transformers import AutoTokenizer, T5EncoderModel
 from args import get_args  # isort:skip
 from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
-from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings, print_memory, reset_memory  # isort:skip
+from utils import (
+    get_gradient_norm,
+    get_optimizer,
+    prepare_rotary_positional_embeddings,
+    print_memory,
+    reset_memory,
+    unwrap_model,
+)
 
 
 logger = get_logger(__name__)
@@ -155,7 +161,6 @@ def log_validation(
     pipe: CogVideoXImageToVideoPipeline,
     args: Dict[str, Any],
     pipeline_args: Dict[str, Any],
-    epoch,
     is_final_validation: bool = False,
 ):
     logger.info(
@@ -199,6 +204,88 @@ def log_validation(
             )
 
     return videos
+
+
+def run_validation(
+    args: Dict[str, Any],
+    accelerator: Accelerator,
+    transformer,
+    scheduler,
+    model_config: Dict[str, Any],
+    weight_dtype: torch.dtype,
+) -> None:
+    accelerator.print("===== Memory before validation =====")
+    print_memory(accelerator.device)
+    torch.cuda.synchronize(accelerator.device)
+
+    pipe = CogVideoXImageToVideoPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        transformer=unwrap_model(accelerator, transformer),
+        scheduler=scheduler,
+        revision=args.revision,
+        variant=args.variant,
+        torch_dtype=weight_dtype,
+    )
+
+    if args.enable_slicing:
+        pipe.vae.enable_slicing()
+    if args.enable_tiling:
+        pipe.vae.enable_tiling()
+    if args.enable_model_cpu_offload:
+        pipe.enable_model_cpu_offload()
+
+    validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
+    validation_images = args.validation_images.split(args.validation_prompt_separator)
+    for validation_image, validation_prompt in zip(validation_images, validation_prompts):
+        pipeline_args = {
+            "image": load_image(validation_image),
+            "prompt": validation_prompt,
+            "guidance_scale": args.guidance_scale,
+            "use_dynamic_cfg": args.use_dynamic_cfg,
+            "height": args.height,
+            "width": args.width,
+            "max_sequence_length": model_config.max_text_seq_length,
+        }
+
+        log_validation(
+            pipe=pipe,
+            args=args,
+            accelerator=accelerator,
+            pipeline_args=pipeline_args,
+        )
+
+    accelerator.print("===== Memory after validation =====")
+    print_memory(accelerator.device)
+    reset_memory(accelerator.device)
+
+    del pipe
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize(accelerator.device)
+
+
+class CollateFunction:
+    def __init__(self, weight_dtype: torch.dtype, load_tensors: bool) -> None:
+        self.weight_dtype = weight_dtype
+        self.load_tensors = load_tensors
+
+    def __call__(self, data: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        prompts = [x["prompt"] for x in data[0]]
+
+        if self.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
+
+        images = [x["image"] for x in data[0]]
+        images = torch.stack(images).to(dtype=self.weight_dtype, non_blocking=True)
+
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
+
+        return {
+            "images": images,
+            "videos": videos,
+            "prompts": prompts,
+        }
 
 
 def main(args):
@@ -284,6 +371,12 @@ def main(args):
         variant=args.variant,
     )
 
+    # These changes will also be required when trying to run inference with the trained lora
+    if args.ignore_learned_positional_embeddings:
+        del transformer.patch_embed.pos_embedding
+        transformer.patch_embed.use_learned_positional_embeddings = False
+        transformer.config.use_learned_positional_embeddings = False
+
     vae = AutoencoderKLCogVideoX.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="vae",
@@ -349,24 +442,21 @@ def main(args):
     )
     transformer.add_adapter(transformer_lora_config)
 
-    def unwrap_model(model):
-        model = accelerator.unwrap_model(model)
-        model = model._orig_mod if is_compiled_module(model) else model
-        return model
-
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
     def save_model_hook(models, weights, output_dir):
         if accelerator.is_main_process:
             transformer_lora_layers_to_save = None
 
             for model in models:
-                if isinstance(model, type(unwrap_model(transformer))):
+                if isinstance(unwrap_model(accelerator, model), type(unwrap_model(accelerator, transformer))):
+                    model = unwrap_model(accelerator, model)
                     transformer_lora_layers_to_save = get_peft_model_state_dict(model)
                 else:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
                 # make sure to pop weight so that corresponding model is not saved again
-                weights.pop()
+                if weights:
+                    weights.pop()
 
             CogVideoXImageToVideoPipeline.save_lora_weights(
                 output_dir,
@@ -376,13 +466,20 @@ def main(args):
     def load_model_hook(models, input_dir):
         transformer_ = None
 
-        while len(models) > 0:
-            model = models.pop()
+        # This is a bit of a hack but I don't know any other solution.
+        if not accelerator.distributed_type == DistributedType.DEEPSPEED:
+            while len(models) > 0:
+                model = models.pop()
 
-            if isinstance(model, type(unwrap_model(transformer))):
-                transformer_ = model
-            else:
-                raise ValueError(f"Unexpected save model: {model.__class__}")
+                if isinstance(unwrap_model(accelerator, model), type(unwrap_model(accelerator, transformer))):
+                    transformer_ = unwrap_model(accelerator, model)
+                else:
+                    raise ValueError(f"Unexpected save model: {unwrap_model(accelerator, model).__class__}")
+        else:
+            transformer_ = CogVideoXTransformer3DModel.from_pretrained(
+                args.pretrained_model_name_or_path, subfolder="transformer"
+            )
+            transformer_.add_adapter(transformer_lora_config)
 
         lora_state_dict = CogVideoXImageToVideoPipeline.lora_state_dict(input_dir)
 
@@ -486,23 +583,7 @@ def main(args):
             video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
         )
 
-    def collate_fn(data):
-        prompts = [x["prompt"] for x in data[0]]
-
-        if args.load_tensors:
-            prompts = torch.stack(prompts).to(dtype=weight_dtype, non_blocking=True)
-
-        images = [x["image"] for x in data[0]]
-        images = torch.stack(images).to(dtype=weight_dtype, non_blocking=True)
-
-        videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(dtype=weight_dtype, non_blocking=True)
-
-        return {
-            "images": images,
-            "videos": videos,
-            "prompts": prompts,
-        }
+    collate_fn = CollateFunction(weight_dtype, args.load_tensors)
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -515,7 +596,7 @@ def main(args):
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -552,7 +633,7 @@ def main(args):
     )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataset) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
@@ -574,6 +655,7 @@ def main(args):
     accelerator.print("***** Running training *****")
     accelerator.print(f"  Num trainable parameters = {num_trainable_parameters}")
     accelerator.print(f"  Num examples = {len(train_dataset)}")
+    accelerator.print(f"  Num batches each epoch = {len(train_dataloader)}")
     accelerator.print(f"  Num epochs = {args.num_train_epochs}")
     accelerator.print(f"  Instantaneous batch size per device = {args.train_batch_size}")
     accelerator.print(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -589,7 +671,7 @@ def main(args):
         if args.resume_from_checkpoint != "latest":
             path = os.path.basename(args.resume_from_checkpoint)
         else:
-            # Get the mos recent checkpoint
+            # Get the most recent checkpoint
             dirs = os.listdir(args.output_dir)
             dirs = [d for d in dirs if d.startswith("checkpoint")]
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
@@ -641,6 +723,7 @@ def main(args):
 
                 # Encode videos
                 if not args.load_tensors:
+                    images = images.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                     image_noise_sigma = torch.normal(
                         mean=-3.0, std=0.5, size=(images.size(0),), device=accelerator.device, dtype=weight_dtype
                     )
@@ -757,6 +840,7 @@ def main(args):
                 progress_bar.update(1)
                 global_step += 1
 
+                # Checkpointing
                 if accelerator.is_main_process or accelerator.distributed_type == DistributedType.DEEPSPEED:
                     if global_step % args.checkpointing_steps == 0:
                         # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
@@ -783,13 +867,23 @@ def main(args):
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
+                # Validation
+                should_run_validation = args.validation_prompt is not None and (
+                    args.validation_steps is not None and global_step % args.validation_steps == 0
+                )
+                if should_run_validation:
+                    run_validation(args, accelerator, transformer, scheduler, model_config, weight_dtype)
+
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
-            logs = {
-                "loss": loss.detach().item(),
-                "lr": last_lr,
-                "gradient_norm_before_clip": gradient_norm_before_clip,
-                "gradient_norm_after_clip": gradient_norm_after_clip,
-            }
+            logs = {"loss": loss.detach().item(), "lr": last_lr}
+            # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
+            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+                logs.update(
+                    {
+                        "gradient_norm_before_clip": gradient_norm_before_clip,
+                        "gradient_norm_after_clip": gradient_norm_after_clip,
+                    }
+                )
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
@@ -797,61 +891,16 @@ def main(args):
                 break
 
         if accelerator.is_main_process:
-            if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
-                accelerator.print("===== Memory before validation =====")
-                print_memory(accelerator.device)
-                torch.cuda.synchronize(accelerator.device)
-
-                pipe = CogVideoXImageToVideoPipeline.from_pretrained(
-                    args.pretrained_model_name_or_path,
-                    transformer=unwrap_model(transformer),
-                    scheduler=scheduler,
-                    revision=args.revision,
-                    variant=args.variant,
-                    torch_dtype=weight_dtype,
-                )
-
-                if args.enable_slicing:
-                    pipe.vae.enable_slicing()
-                if args.enable_tiling:
-                    pipe.vae.enable_tiling()
-                if args.enable_model_cpu_offload:
-                    pipe.enable_model_cpu_offload()
-
-                validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
-                validation_images = args.validation_images.split(args.validation_prompt_separator)
-                for validation_image, validation_prompt in zip(validation_images, validation_prompts):
-                    pipeline_args = {
-                        "image": load_image(validation_image),
-                        "prompt": validation_prompt,
-                        "guidance_scale": args.guidance_scale,
-                        "use_dynamic_cfg": args.use_dynamic_cfg,
-                        "height": args.height,
-                        "width": args.width,
-                        "max_sequence_length": model_config.max_text_seq_length,
-                    }
-
-                    log_validation(
-                        pipe=pipe,
-                        args=args,
-                        accelerator=accelerator,
-                        pipeline_args=pipeline_args,
-                        epoch=epoch,
-                    )
-
-                accelerator.print("===== Memory after validation =====")
-                print_memory(accelerator.device)
-                reset_memory(accelerator.device)
-
-                del pipe
-                gc.collect()
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize(accelerator.device)
+            should_run_validation = args.validation_prompt is not None and (
+                args.validation_epochs is not None and (epoch + 1) % args.validation_epochs == 0
+            )
+            if should_run_validation:
+                run_validation(args, accelerator, transformer, scheduler, model_config, weight_dtype)
 
     accelerator.wait_for_everyone()
 
     if accelerator.is_main_process:
-        transformer = unwrap_model(transformer)
+        transformer = unwrap_model(accelerator, transformer)
         dtype = (
             torch.float16
             if args.mixed_precision == "fp16"
@@ -922,7 +971,6 @@ def main(args):
                     pipe=pipe,
                     args=args,
                     pipeline_args=pipeline_args,
-                    epoch=epoch,
                     is_final_validation=True,
                 )
                 validation_outputs.extend(video)

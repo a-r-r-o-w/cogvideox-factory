@@ -51,6 +51,8 @@ video = pipe("<my-awesome-prompt>").frames[0]
 export_to_video(video, "output.mp4", fps=8)
 ```
 
+你也可以在[这里](tests/test_lora_inference.py)来检查你的Lora是否正常挂载。
+
 **注意：** 对于图像到视频的微调，您必须从 [这个分支](https://github.com/huggingface/diffusers/pull/9482) 安装
 diffusers（该分支为 CogVideoX 的图像到视频添加了 LoRA 加载支持）直到它被合并。
 
@@ -77,7 +79,7 @@ diffusers（该分支为 CogVideoX 的图像到视频添加了 LoRA 加载支持
   ```
   LEARNING_RATES=("1e-4" "1e-3")
   LR_SCHEDULES=("cosine_with_restarts")
-  OPTIMIZERS=("adamw", "adam")
+  OPTIMIZERS=("adamw" "adam")
   MAX_TRAIN_STEPS=("3000")
   ```
 
@@ -440,7 +442,7 @@ diffusers（该分支为 CogVideoX 的图像到视频添加了 LoRA 加载支持
 - [ ] 使脚本兼容 FSDP
 - [x] 使脚本兼容 DeepSpeed
 - [ ] 基于 vLLM 的字幕脚本
-- [ ] 在 `prepare_dataset.py` 中支持多分辨率/帧数
+- [x] 在 `prepare_dataset.py` 中支持多分辨率/帧数
 - [ ] 分析性能瓶颈并尽可能减少同步操作
 - [ ] 支持 QLoRA（优先），以及其他高使用率的 LoRA 方法
 - [x] 使用 bitsandbytes 的节省内存优化器测试脚本

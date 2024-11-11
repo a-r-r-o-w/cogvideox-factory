@@ -49,7 +49,7 @@ class VideoDataset(Dataset):
         self.caption_column = caption_column
         self.video_column = video_column
         self.max_num_frames = max_num_frames
-        self.id_token = id_token or ""
+        self.id_token = f"{id_token.strip()} " if id_token else ""
         self.height_buckets = height_buckets or HEIGHT_BUCKETS
         self.width_buckets = width_buckets or WIDTH_BUCKETS
         self.frame_buckets = frame_buckets or FRAME_BUCKETS
@@ -78,22 +78,31 @@ class VideoDataset(Dataset):
                 self.video_paths,
             ) = self._load_dataset_from_csv()
 
-        self.num_videos = len(self.video_paths)
-        if self.num_videos != len(self.prompts):
+        if len(self.video_paths) != len(self.prompts):
             raise ValueError(
                 f"Expected length of prompts and videos to be the same but found {len(self.prompts)=} and {len(self.video_paths)=}. Please ensure that the number of caption prompts and videos match in your dataset."
             )
 
         self.video_transforms = transforms.Compose(
             [
-                transforms.RandomHorizontalFlip(random_flip) if random_flip else transforms.Lambda(lambda x: x),
-                transforms.Lambda(lambda x: x / 255.0),
+                transforms.RandomHorizontalFlip(random_flip)
+                if random_flip
+                else transforms.Lambda(self.identity_transform),
+                transforms.Lambda(self.scale_transform),
                 transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
             ]
         )
 
+    @staticmethod
+    def identity_transform(x):
+        return x
+
+    @staticmethod
+    def scale_transform(x):
+        return x / 255.0
+
     def __len__(self) -> int:
-        return self.num_videos
+        return len(self.video_paths)
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         if isinstance(index, list):
@@ -220,32 +229,38 @@ class VideoDataset(Dataset):
         pt_filename = f"{filename_without_ext}.pt"
 
         # The current path is something like: /a/b/c/d/videos/00001.mp4
-        # We need to reach: /a/b/c/d/latents/00001.pt
-        images_path = path.parent.parent.joinpath("image_latents")
-        latents_path = path.parent.parent.joinpath("latents")
-        embeds_path = path.parent.parent.joinpath("embeddings")
+        # We need to reach: /a/b/c/d/video_latents/00001.pt
+        image_latents_path = path.parent.parent.joinpath("image_latents")
+        video_latents_path = path.parent.parent.joinpath("video_latents")
+        embeds_path = path.parent.parent.joinpath("prompt_embeds")
 
-        if not latents_path.exists() or not embeds_path.exists() or (self.image_to_video and not images_path.exists()):
+        if (
+            not video_latents_path.exists()
+            or not embeds_path.exists()
+            or (self.image_to_video and not image_latents_path.exists())
+        ):
             raise ValueError(
-                f"When setting the load_tensors parameter to `True`, it is expected that the `{self.data_root=}` contains two folders named `latents` and `embeddings`. However, these folders were not found. Please make sure to have prepared your data correctly using `prepare_data.py`. Additionally, if you're training image-to-video, it is expected that an `image_latents` folder is also present."
+                f"When setting the load_tensors parameter to `True`, it is expected that the `{self.data_root=}` contains two folders named `video_latents` and `prompt_embeds`. However, these folders were not found. Please make sure to have prepared your data correctly using `prepare_data.py`. Additionally, if you're training image-to-video, it is expected that an `image_latents` folder is also present."
             )
 
         if self.image_to_video:
-            image_filepath = images_path.joinpath(pt_filename)
-        latent_filepath = latents_path.joinpath(pt_filename)
+            image_latent_filepath = image_latents_path.joinpath(pt_filename)
+        video_latent_filepath = video_latents_path.joinpath(pt_filename)
         embeds_filepath = embeds_path.joinpath(pt_filename)
 
-        if not latent_filepath.is_file() or not embeds_filepath.is_file():
+        if not video_latent_filepath.is_file() or not embeds_filepath.is_file():
             if self.image_to_video:
-                image_filepath = image_filepath.as_posix()
-            latent_filepath = latent_filepath.as_posix()
+                image_latent_filepath = image_latent_filepath.as_posix()
+            video_latent_filepath = video_latent_filepath.as_posix()
             embeds_filepath = embeds_filepath.as_posix()
             raise ValueError(
-                f"The file {latent_filepath=} or {embeds_filepath=} could not be found. Please ensure that you've correctly executed `prepare_dataset.py`."
+                f"The file {video_latent_filepath=} or {embeds_filepath=} could not be found. Please ensure that you've correctly executed `prepare_dataset.py`."
             )
 
-        images = torch.load(image_filepath, map_location="cpu", weights_only=True) if self.image_to_video else None
-        latents = torch.load(latent_filepath, map_location="cpu", weights_only=True)
+        images = (
+            torch.load(image_latent_filepath, map_location="cpu", weights_only=True) if self.image_to_video else None
+        )
+        latents = torch.load(video_latent_filepath, map_location="cpu", weights_only=True)
         embeds = torch.load(embeds_filepath, map_location="cpu", weights_only=True)
 
         return images, latents, embeds
@@ -350,12 +365,42 @@ class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
 
 
 class BucketSampler(Sampler):
-    def __init__(self, data_source: VideoDataset, batch_size: int = 8, shuffle: bool = True) -> None:
+    r"""
+    PyTorch Sampler that groups 3D data by height, width and frames.
+
+    Args:
+        data_source (`VideoDataset`):
+            A PyTorch dataset object that is an instance of `VideoDataset`.
+        batch_size (`int`, defaults to `8`):
+            The batch size to use for training.
+        shuffle (`bool`, defaults to `True`):
+            Whether or not to shuffle the data in each batch before dispatching to dataloader.
+        drop_last (`bool`, defaults to `False`):
+            Whether or not to drop incomplete buckets of data after completely iterating over all data
+            in the dataset. If set to True, only batches that have `batch_size` number of entries will
+            be yielded. If set to False, it is guaranteed that all data in the dataset will be processed
+            and batches that do not have `batch_size` number of entries will also be yielded.
+    """
+
+    def __init__(
+        self, data_source: VideoDataset, batch_size: int = 8, shuffle: bool = True, drop_last: bool = False
+    ) -> None:
         self.data_source = data_source
         self.batch_size = batch_size
         self.shuffle = shuffle
+        self.drop_last = drop_last
 
         self.buckets = {resolution: [] for resolution in data_source.resolutions}
+
+        self._raised_warning_for_drop_last = False
+
+    def __len__(self):
+        if self.drop_last and not self._raised_warning_for_drop_last:
+            self._raised_warning_for_drop_last = True
+            logger.warning(
+                "Calculating the length for bucket sampler is not possible when `drop_last` is set to True. This may cause problems when setting the number of epochs used for training."
+            )
+        return (len(self.data_source) + self.batch_size - 1) // self.batch_size
 
     def __iter__(self):
         for index, data in enumerate(self.data_source):
@@ -369,3 +414,15 @@ class BucketSampler(Sampler):
                 yield self.buckets[(f, h, w)]
                 del self.buckets[(f, h, w)]
                 self.buckets[(f, h, w)] = []
+
+        if self.drop_last:
+            return
+
+        for fhw, bucket in list(self.buckets.items()):
+            if len(bucket) == 0:
+                continue
+            if self.shuffle:
+                random.shuffle(bucket)
+                yield bucket
+                del self.buckets[fhw]
+                self.buckets[fhw] = []
