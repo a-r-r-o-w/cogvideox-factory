@@ -4,9 +4,11 @@ import os
 import sys
 from typing import List, Tuple
 
-import decord
 from PIL import Image
 from torch.utils.data import Dataset
+
+
+import decord  # isort:skip
 
 
 class VideoDataset(Dataset):
