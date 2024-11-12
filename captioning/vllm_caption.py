@@ -2,15 +2,18 @@
 Needs `vllm` to be installed from the `main`.
 """
 
+import gc
 import os
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import fire
-from dataset import VideoDataset
+import torch
 from torch.utils.data import DataLoader
 from vllm import LLM, SamplingParams
+
+from dataset import VideoDataset  # isort:skip
 
 
 SYSTEM_PROMPT = r"""
@@ -24,10 +27,17 @@ You responses should just be the video generation prompt. Here are examples:
 - "A street artist, clad in a worn-out denim jacket and a colorful bandana, stands before a vast concrete wall in the heart, holding a can of spray paint, spray-painting a colorful bird on a mottled wall"
 """.strip()
 
+SUMMARY_USER_PROMPT = r"""Please summarize this video and limit the summary to 100-200 words.""".strip()
 
-USER_PROMPT = r"""
-Summarize this set of frames. Consider these frames to be part of the same video. Please limit the summary to 100 words. Describe the content generally and do not start with phrases like "This video is about" or "This video captures".
-"""
+PROMPT_GEN_USER_PROMPT = r"""
+Could you generate a prompt for a video generation model given the following summary:
+
+```
+{0}
+```
+
+Please limit the prompt to [{1}] words.
+""".strip()
 
 
 def save_results(output_queue, output_dir):
@@ -38,7 +48,6 @@ def save_results(output_queue, output_dir):
                 break
 
             video_filenames, outputs = item
-            outputs = [o.outputs[0].text for o in outputs]
 
             with open(os.path.join(output_dir, "videos.txt"), "a") as file:
                 for filename in video_filenames:
@@ -52,9 +61,9 @@ def save_results(output_queue, output_dir):
             continue
 
 
-def create_conversations(batch, prompt: Optional[str] = None):
+def create_video_summary_conversations(batch, prompt: Optional[str] = None):
     if prompt is None:
-        prompt = USER_PROMPT
+        prompt = SUMMARY_USER_PROMPT
 
     conversations = []
 
@@ -62,34 +71,36 @@ def create_conversations(batch, prompt: Optional[str] = None):
         conversation = []
         content = []
 
-        content.append(
-            {
-                "type": "text",
-                "text": prompt,
-            }
-        )
+        content.append({"type": "text", "text": prompt})
         for frame in video:
             new_image = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{frame}"}}
             content.append(new_image)
 
-        conversation.append(
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": SYSTEM_PROMPT,
-                    }
-                ],
-            }
-        )
+        # conversation.append({"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]})
+        conversation.append({"role": "user", "content": content})
 
-        conversation.append(
-            {
-                "role": "user",
-                "content": content,
-            }
-        )
+        conversations.append(conversation)
+
+    return conversations
+
+
+def create_prompt_generation_conversations(batch, prompt: Optional[str] = None):
+    if prompt is None:
+        prompt = PROMPT_GEN_USER_PROMPT
+    
+    conversations = []
+
+    for i, summary in enumerate(batch["summary"]):
+        conversation = []
+        content = []
+
+        content.append({
+            "type": "text",
+            "text": prompt.format(summary, 20)
+        })
+
+        conversation.append({"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]})
+        conversation.append({"role": "user", "content": content})
 
         conversations.append(conversation)
 
@@ -99,7 +110,7 @@ def create_conversations(batch, prompt: Optional[str] = None):
 def collate_fn(batch):
     inputs = {
         "videos": [sample["video"] for sample in batch],
-        "video_names": [sample["video_name"] for sample in batch],
+        "filename": [sample["filename"] for sample in batch],
     }
     return inputs
 
@@ -121,32 +132,51 @@ def prepare_dataloader(video_root_dir, output_dir, video_extensions, max_num_fra
     return dataloader
 
 
-def load_model(
+def load_summary_model(
     max_num_frames: int,
     max_tokens: int,
     num_devices: int,
     download_dir: Optional[str] = None,
     trust_remote_code: bool = False,
 ):
-    vllm_engine = LLM(
+    engine = LLM(
         "openbmb/MiniCPM-V-2_6",
-        # "Qwen/Qwen2-VL-2B-Instruct",
+        dtype="bfloat16",
         tensor_parallel_size=num_devices,
         limit_mm_per_prompt={"image": max_num_frames},
         download_dir=download_dir,
         trust_remote_code=trust_remote_code,
     )
     sampling_params = SamplingParams(max_tokens=max_tokens)
-    return vllm_engine, sampling_params
+    return engine, sampling_params
+
+
+def load_prompt_gen_model(
+    max_tokens: int,
+    num_devices: int,
+    download_dir: Optional[str] = None,
+    trust_remote_code: bool = False,
+):
+    engine = LLM(
+        "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        dtype="bfloat16",
+        tensor_parallel_size=num_devices,
+        download_dir=download_dir,
+        trust_remote_code=trust_remote_code,
+    )
+    sampling_params = SamplingParams(max_tokens=max_tokens)
+    return engine, sampling_params
 
 
 def main(
     root_dir: str,
     output_dir: str,
-    num_devices: int,
-    max_num_frames: int,
-    max_tokens: int,
-    prompt: Optional[str] = None,
+    num_devices: int = 1,
+    max_num_frames: int = 8,
+    max_summary_tokens: int = 512,
+    max_prompt_gen_tokens: int = 256,
+    video_summary_prompt: Optional[str] = None,
+    prompt_gen_prompt: Optional[str] = None,
     video_extensions: tuple = (".mp4"),
     num_data_workers: int = 4,
     batch_size: int = 8,
@@ -155,13 +185,15 @@ def main(
     trust_remote_code: bool = False,
 ):
     max_allowed_imgs_per_req = batch_size * max_num_frames
-    vllm_engine, sampling_params = load_model(
+    
+    summary_engine, summary_sampling_params = load_summary_model(
         max_num_frames=max_allowed_imgs_per_req,
-        max_tokens=max_tokens,
+        max_tokens=max_summary_tokens,
         num_devices=num_devices,
         download_dir=download_dir,
         trust_remote_code=trust_remote_code,
     )
+
     dataloader = prepare_dataloader(
         video_root_dir=root_dir,
         output_dir=output_dir,
@@ -177,10 +209,38 @@ def main(
     save_future = save_thread.submit(save_results, output_queue, output_dir)
 
     try:
+        video_data = []
+
         for idx, batch in enumerate(dataloader):
-            conversations = create_conversations(batch, prompt=prompt)
-            outputs = vllm_engine.chat(conversations, sampling_params)
-            output_queue.put((batch["video_names"], outputs))
+            conversations = create_video_summary_conversations(batch, prompt=video_summary_prompt)
+            video_summaries = summary_engine.chat(conversations, summary_sampling_params)
+            
+            video_data_item = {
+                "filename": batch["filename"],
+                "summary": [summary.outputs[0].text for summary in video_summaries]
+            }
+
+            video_data.append(video_data_item)
+        
+        del summary_engine, summary_sampling_params
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        prompt_gen_engine, prompt_gen_sampling_params = load_prompt_gen_model(
+            max_tokens=max_prompt_gen_tokens,
+            num_devices=num_devices,
+            download_dir=download_dir,
+            trust_remote_code=trust_remote_code,
+        )
+        
+        for idx, batch in enumerate(video_data):
+            conversations = create_prompt_generation_conversations(batch, prompt=prompt_gen_prompt)
+            prompts = prompt_gen_engine.chat(conversations, prompt_gen_sampling_params)
+            
+            # Get outputs and remove surrounding quotes
+            prompts = [prompt.outputs[0].text[1 : -1] for prompt in prompts]
+
+            output_queue.put((batch["filename"], prompts))
 
     finally:
         output_queue.put(None)

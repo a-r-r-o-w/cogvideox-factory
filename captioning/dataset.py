@@ -56,12 +56,13 @@ class VideoDataset(Dataset):
 
     def load_video(self, path: str) -> List[Image.Image]:
         video_reader = decord.VideoReader(uri=path)
-        base_name = os.path.basename(path).split(".")[0]
+        filename = os.path.basename(path)
 
         video_frames = [Image.fromarray(video_reader[i].asnumpy()) for i in range(len(video_reader))][
             : self.max_num_frames
         ]
-        return {"video": [self.encode_image(frame) for frame in video_frames], "video_name": base_name}
+        
+        return {"video": [self.encode_image(frame) for frame in video_frames], "filename": filename}
 
     def encode_image(self, image):
         buffered = io.BytesIO()
