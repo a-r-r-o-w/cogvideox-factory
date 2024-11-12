@@ -743,7 +743,7 @@ def main(args):
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
             logs = {"loss": loss.detach().item(), "lr": last_lr}
             # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
-            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+            if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
                 logs.update(
                     {
                         "gradient_norm_before_clip": gradient_norm_before_clip,
