@@ -13,13 +13,12 @@ class CaptionDataset(Dataset):
         df = pd.read_csv(input_file)
         self.filenames = df["filename"]
         self.summaries = df["summary"]
-    
+
     def __len__(self):
         return len(self.filenames)
-    
+
     def __getitem__(self, index: int):
         return {
             "filename": self.filenames[index],
             "summary": self.summaries[index],
         }
-    

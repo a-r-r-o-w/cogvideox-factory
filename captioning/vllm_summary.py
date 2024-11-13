@@ -13,6 +13,7 @@ import pandas as pd
 from torch.utils.data import DataLoader
 from vllm import LLM, SamplingParams
 
+
 from dataset_video import VideoDataset  # isort:skip
 
 
@@ -53,11 +54,13 @@ def save_results(output_queue, output_dir):
 
             df_data = []
             for filename, summary in zip(video_filenames, summaries):
-                df_data.append({
-                    "filename": filename,
-                    "summary": summary,
-                })
-            
+                df_data.append(
+                    {
+                        "filename": filename,
+                        "summary": summary,
+                    }
+                )
+
             df = pd.DataFrame(df_data)
             df.to_csv(output_file, mode="a", header=not output_file.exists(), index=False)
 
@@ -147,7 +150,7 @@ def main(
     trust_remote_code: bool = False,
 ):
     max_allowed_imgs_per_req = batch_size * max_num_frames
-    
+
     summary_engine, summary_sampling_params = load_summary_model(
         max_num_frames=max_allowed_imgs_per_req,
         max_tokens=max_summary_tokens,
@@ -173,7 +176,7 @@ def main(
     try:
         for idx, batch in enumerate(dataloader):
             conversations = create_video_summary_conversations(batch, prompt=video_summary_prompt)
-            video_summaries = summary_engine.chat(conversations, summary_sampling_params)      
+            video_summaries = summary_engine.chat(conversations, summary_sampling_params)
             summaries = [summary.outputs[0].text for summary in video_summaries]
             output_queue.put((batch["filename"], summaries))
     finally:

@@ -2,16 +2,15 @@
 Needs `vllm` to be installed from the `main`.
 """
 
-import gc
 import os
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import fire
-import torch
 from torch.utils.data import DataLoader
 from vllm import LLM, SamplingParams
+
 
 from dataset_caption import CaptionDataset  # isort:skip
 
@@ -50,7 +49,7 @@ def save_results(output_queue, output_dir):
             with open(os.path.join(output_dir, "videos.txt"), "a", encoding="utf-8") as file:
                 for filename in video_filenames:
                     file.write(filename + "\n")
-            
+
             with open(os.path.join(output_dir, "prompts.txt"), "a", encoding="utf-8") as file:
                 for caption in captions:
                     file.write(caption + "\n")
@@ -61,17 +60,14 @@ def save_results(output_queue, output_dir):
 def create_prompt_generation_conversations(batch, prompt: Optional[str] = None):
     if prompt is None:
         prompt = PROMPT_GEN_USER_PROMPT
-    
+
     conversations = []
 
     for i, summary in enumerate(batch):
         conversation = []
         content = []
 
-        content.append({
-            "type": "text",
-            "text": prompt.format(summary, 50)
-        })
+        content.append({"type": "text", "text": prompt.format(summary, 50)})
 
         conversation.append({"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]})
         conversation.append({"role": "user", "content": content})
@@ -155,10 +151,10 @@ def main(
         for idx, batch in enumerate(dataloader):
             conversations = create_prompt_generation_conversations(batch["summary"], prompt=prompt_gen_prompt)
             prompts = prompt_gen_engine.chat(conversations, prompt_gen_sampling_params)
-            
+
             # Get outputs and remove surrounding quotes/newlines
             prompts = [" ".join(prompt.outputs[0].text.split("\n")) for prompt in prompts]
-            prompts = [prompt.lstrip("\"").rstrip("\"") for prompt in prompts]
+            prompts = [prompt.lstrip('"').rstrip('"') for prompt in prompts]
 
             output_queue.put((batch["filename"], prompts))
     finally:

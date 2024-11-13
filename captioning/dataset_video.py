@@ -62,15 +62,15 @@ class VideoDataset(Dataset):
             gap = len(l) / n
             idxs = [int(i * gap + gap / 2) for i in range(n)]
             return [l[i] for i in idxs]
-        
+
         sample_fps = round(video_reader.get_avg_fps() / 1)
-        frame_idx = [i for i in range(0, len(video_reader), sample_fps)]
+        frame_idx = list(range(0, len(video_reader), sample_fps))
 
         if len(frame_idx) > self.max_num_frames:
             frame_idx = uniform_sample(frame_idx, self.max_num_frames)
-        
+
         video_frames = [Image.fromarray(video_reader[i].asnumpy()) for i in frame_idx]
-        
+
         return {"video": [self.encode_image(frame) for frame in video_frames], "filename": filename}
 
     def encode_image(self, image):
