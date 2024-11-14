@@ -1,4 +1,5 @@
 import pathlib
+import uuid
 from typing import Any, Dict, Optional
 
 import fire
@@ -96,6 +97,8 @@ def main(
         torch_dtype=DTYPE_MAPPING[dtype]
     )
 
+    print("LoRA ID:", lora_id)
+
     if lora_id is not None:
         pipe.load_lora_weights(lora_id)
 
@@ -121,24 +124,26 @@ def main(
                 use_dynamic_cfg=False,
                 generator=torch.Generator().manual_seed(seed),
             ).frames[0]
-            input_data.append(data.items())
+            input_data.append(list(data.items()))
         
         video = gather_object(video)
         input_data = gather_object(input_data)
 
         if accelerator.is_main_process:
             count += 1
-            input_data = dict(input_data[0])
-            
-            filename = ""
-            filename += f"height_{input_data['height'][0]}" + "---"
-            filename += f"width_{input_data['width'][0]}" + "---"
-            filename += f"num_frames_{input_data['num_frames'][0]}" + "---"
-            filename += prompt_to_filename(input_data["prompt"][0])[:25]
-            filename += ".mp4"
-            filename = output_dir.joinpath(filename)
-            
-            export_to_video(video, filename, fps=save_fps)
+            for data in input_data:
+                data = dict(data)
+                
+                filename = ""
+                filename += f"height_{data['height'][0]}" + "---"
+                filename += f"width_{data['width'][0]}" + "---"
+                filename += f"num_frames_{data['num_frames'][0]}" + "---"
+                filename += prompt_to_filename(data["prompt"][0])[:25] + "---"
+                filename += str(uuid.uuid4())
+                filename += ".mp4"
+                filename = output_dir.joinpath(filename)
+                
+                export_to_video(video, filename, fps=save_fps)
     
     if accelerator.is_main_process:
         print(f"Text-to-video generation for LoRA completed. Results saved in {output_dir}.")

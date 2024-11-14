@@ -8,7 +8,6 @@
 #SBATCH --gres=gpu:8
 #SBATCH --partition=hopper-prod
 #SBATCH -o /path/to/logs/logs-%x-%j.out
-#SBATCH --exclusive
 
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
