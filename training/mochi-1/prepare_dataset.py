@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import torch
 import torch.distributed as dist
-from diffusers import AutoencoderKL
+from diffusers import AutoencoderKLMochi
 from diffusers.training_utils import set_seed
 from diffusers.utils import export_to_video, get_logger
 from torch.utils.data import DataLoader
@@ -24,7 +24,9 @@ from transformers import T5EncoderModel, T5Tokenizer
 
 import decord  # isort:skip
 
-from ..dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
+import sys
+sys.path.append("..")
+from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
 
 
 decord.bridge.set_bridge("torch")
@@ -485,12 +487,12 @@ def main():
         tokenizer = T5Tokenizer.from_pretrained(args.model_id, subfolder="tokenizer")
         text_encoder = T5EncoderModel.from_pretrained(
             args.model_id, subfolder="text_encoder", torch_dtype=weight_dtype
-        )
-        text_encoder = text_encoder.to(device)
-
-        vae = AutoencoderKL.from_pretrained(args.model_id, subfolder="vae", torch_dtype=weight_dtype)
-        vae = vae.to(device)
-
+        ).to(device)
+        
+        vae = AutoencoderKLMochi.from_pretrained(
+            args.model_id, subfolder="vae", torch_dtype=weight_dtype
+        ).to(device)
+        
         if args.use_slicing:
             vae.enable_slicing()
         if args.use_tiling:
