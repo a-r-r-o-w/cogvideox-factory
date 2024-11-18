@@ -278,7 +278,7 @@ class VideoDatasetWithResizing(VideoDataset):
             nearest_frame_bucket = min(
                 self.frame_buckets, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
             )
-            
+
             frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
             frames = video_reader.get_batch(frame_indices)
             frames = frames[:nearest_frame_bucket].float()
@@ -342,8 +342,6 @@ class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
             nearest_frame_bucket = min(
                 self.frame_buckets, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
             )
-            if video_num_frames < nearest_frame_bucket:
-                return None, None, None
 
             frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
 
