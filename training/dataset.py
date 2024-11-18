@@ -144,7 +144,7 @@ class VideoDataset(Dataset):
             }
         else:
             image, video, _ = self._preprocess_video(self.video_paths[index])
-            
+
             return {
                 "prompt": self.id_token + self.prompts[index],
                 "image": image,
@@ -281,7 +281,7 @@ class VideoDatasetWithResizing(VideoDataset):
             )
 
             frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
-            
+
             frames = video_reader.get_batch(frame_indices)
             frames = frames[:nearest_frame_bucket].float()
             frames = frames.permute(0, 3, 1, 2).contiguous()
@@ -404,17 +404,16 @@ class BucketSampler(Sampler):
 
     def __iter__(self):
         for index, data in enumerate(self.data_source):
-            if data is not None:
-                video_metadata = data["video_metadata"]
-                f, h, w = video_metadata["num_frames"], video_metadata["height"], video_metadata["width"]
+            video_metadata = data["video_metadata"]
+            f, h, w = video_metadata["num_frames"], video_metadata["height"], video_metadata["width"]
 
-                self.buckets[(f, h, w)].append(data)
-                if len(self.buckets[(f, h, w)]) == self.batch_size:
-                    if self.shuffle:
-                        random.shuffle(self.buckets[(f, h, w)])
-                    yield self.buckets[(f, h, w)]
-                    del self.buckets[(f, h, w)]
-                    self.buckets[(f, h, w)] = []
+            self.buckets[(f, h, w)].append(data)
+            if len(self.buckets[(f, h, w)]) == self.batch_size:
+                if self.shuffle:
+                    random.shuffle(self.buckets[(f, h, w)])
+                yield self.buckets[(f, h, w)]
+                del self.buckets[(f, h, w)]
+                self.buckets[(f, h, w)] = []
 
         if self.drop_last:
             return
