@@ -8,6 +8,7 @@ import pathlib
 import queue
 import traceback
 import uuid
+from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Union
 
@@ -25,7 +26,7 @@ from transformers import T5EncoderModel, T5Tokenizer
 import decord  # isort:skip
 
 import sys
-sys.path.append("..")
+sys.path.append(".")
 from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
 
 
@@ -107,13 +108,13 @@ def get_args() -> Dict[str, Any]:
         "--width_buckets",
         nargs="+",
         type=check_width,
-        default=[256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536],
+        default=[256, 320, 384, 480, 512, 576, 720, 768, 848, 960, 1024, 1280, 1536],
     )
     parser.add_argument(
         "--frame_buckets",
         nargs="+",
         type=check_frames,
-        default=[49],
+        default=[84],
     )
     parser.add_argument(
         "--random_flip",
@@ -149,11 +150,11 @@ def get_args() -> Dict[str, Any]:
         required=True,
         help="Path to output directory where preprocessed videos/latents/embeddings will be saved.",
     )
-    parser.add_argument("--max_num_frames", type=int, default=49, help="Maximum number of frames in output video.")
+    parser.add_argument("--max_num_frames", type=int, default=84, help="Maximum number of frames in output video.")
     parser.add_argument(
-        "--max_sequence_length", type=int, default=226, help="Max sequence length of prompt embeddings."
+        "--max_sequence_length", type=int, default=256, help="Max sequence length of prompt embeddings."
     )
-    parser.add_argument("--target_fps", type=int, default=8, help="Frame rate of output videos.")
+    parser.add_argument("--target_fps", type=int, default=30, help="Frame rate of output videos.")
     parser.add_argument(
         "--save_latents_and_embeddings",
         action="store_true",
@@ -213,6 +214,8 @@ def _get_t5_prompt_embeds(
             return_tensors="pt",
         )
         text_input_ids = text_inputs.input_ids
+        prompt_attention_mask = text_inputs.attention_mask
+        prompt_attention_mask = prompt_attention_mask.bool()
     else:
         if text_input_ids is None:
             raise ValueError("`text_input_ids` must be provided when the tokenizer is not specified.")
@@ -220,12 +223,13 @@ def _get_t5_prompt_embeds(
     prompt_embeds = text_encoder(text_input_ids.to(device))[0]
     prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
 
-    # duplicate text embeddings for each generation per prompt, using mps friendly method
     _, seq_len, _ = prompt_embeds.shape
     prompt_embeds = prompt_embeds.repeat(1, num_videos_per_prompt, 1)
     prompt_embeds = prompt_embeds.view(batch_size * num_videos_per_prompt, seq_len, -1)
+    prompt_attention_mask = prompt_attention_mask.view(batch_size, -1)
+    prompt_attention_mask = prompt_attention_mask.repeat(num_videos_per_prompt, 1)
 
-    return prompt_embeds
+    return prompt_embeds, prompt_attention_mask
 
 
 def encode_prompt(
@@ -233,13 +237,13 @@ def encode_prompt(
     text_encoder: T5EncoderModel,
     prompt: Union[str, List[str]],
     num_videos_per_prompt: int = 1,
-    max_sequence_length: int = 226,
+    max_sequence_length: int = 256,
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
     text_input_ids=None,
 ):
     prompt = [prompt] if isinstance(prompt, str) else prompt
-    prompt_embeds = _get_t5_prompt_embeds(
+    prompt_embeds, prompt_attention_mask = _get_t5_prompt_embeds(
         tokenizer,
         text_encoder,
         prompt=prompt,
@@ -249,7 +253,7 @@ def encode_prompt(
         dtype=dtype,
         text_input_ids=text_input_ids,
     )
-    return prompt_embeds
+    return prompt_embeds, prompt_attention_mask
 
 
 def compute_prompt_embeddings(
@@ -261,8 +265,9 @@ def compute_prompt_embeddings(
     dtype: torch.dtype,
     requires_grad: bool = False,
 ):
-    if requires_grad:
-        prompt_embeds = encode_prompt(
+    ctx = nullcontext() if requires_grad else torch.no_grad()
+    with ctx:
+        prompt_embeds, prompt_attention_mask = encode_prompt(
             tokenizer,
             text_encoder,
             prompts,
@@ -271,18 +276,7 @@ def compute_prompt_embeddings(
             device=device,
             dtype=dtype,
         )
-    else:
-        with torch.no_grad():
-            prompt_embeds = encode_prompt(
-                tokenizer,
-                text_encoder,
-                prompts,
-                num_videos_per_prompt=1,
-                max_sequence_length=max_sequence_length,
-                device=device,
-                dtype=dtype,
-            )
-    return prompt_embeds
+    return prompt_embeds, prompt_attention_mask
 
 
 to_pil_image = transforms.ToPILImage(mode="RGB")
@@ -318,12 +312,14 @@ def serialize_artifacts(
     video_latents_dir: Optional[pathlib.Path] = None,
     prompts_dir: Optional[pathlib.Path] = None,
     prompt_embeds_dir: Optional[pathlib.Path] = None,
+    prompt_attention_mask_dir: Optional[pathlib.Path] = None,
     images: Optional[torch.Tensor] = None,
     image_latents: Optional[torch.Tensor] = None,
     videos: Optional[torch.Tensor] = None,
     video_latents: Optional[torch.Tensor] = None,
     prompts: Optional[List[str]] = None,
     prompt_embeds: Optional[torch.Tensor] = None,
+    prompt_attention_mask: Optional[torch.Tensor] = None
 ) -> None:
     num_frames, height, width = videos.size(1), videos.size(3), videos.size(4)
     metadata = [{"num_frames": num_frames, "height": height, "width": width}]
@@ -335,6 +331,7 @@ def serialize_artifacts(
         (video_latents, video_latents_dir, torch.save, "pt"),
         (prompts, prompts_dir, save_prompt, "txt"),
         (prompt_embeds, prompt_embeds_dir, torch.save, "pt"),
+        (prompt_attention_mask, prompt_attention_mask_dir, torch.save, "pt"),
         (metadata, videos_dir, save_metadata, "txt"),
     ]
     filenames = [uuid.uuid4() for _ in range(batch_size)]
@@ -398,6 +395,7 @@ def main():
     video_latents_dir = tmp_dir.joinpath(f"video_latents/{rank}")
     prompts_dir = tmp_dir.joinpath(f"prompts/{rank}")
     prompt_embeds_dir = tmp_dir.joinpath(f"prompt_embeds/{rank}")
+    prompt_attention_mask_dir = tmp_dir.joinpath(f"prompt_attention_mask/{rank}")
 
     images_dir.mkdir(parents=True, exist_ok=True)
     image_latents_dir.mkdir(parents=True, exist_ok=True)
@@ -405,6 +403,7 @@ def main():
     video_latents_dir.mkdir(parents=True, exist_ok=True)
     prompts_dir.mkdir(parents=True, exist_ok=True)
     prompt_embeds_dir.mkdir(parents=True, exist_ok=True)
+    prompt_attention_mask_dir.mkdir(parents=True, exist_ok=True)
 
     weight_dtype = DTYPE_MAPPING[args.dtype]
     target_fps = args.target_fps
@@ -543,9 +542,10 @@ def main():
                         video_latents = vae._encode(videos)
 
                     video_latents = video_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
+                    print(f"{video_latents.shape=}")
 
                     # Encode prompts
-                    prompt_embeds = compute_prompt_embeddings(
+                    prompt_embeds, prompt_attention_mask = compute_prompt_embeddings(
                         tokenizer,
                         text_encoder,
                         prompts,
@@ -554,6 +554,7 @@ def main():
                         weight_dtype,
                         requires_grad=False,
                     )
+                    print(f"{prompt_attention_mask.shape=}")
 
             if images is not None:
                 images = (images.permute(0, 2, 1, 3, 4) + 1) / 2
@@ -570,12 +571,14 @@ def main():
                     "video_latents_dir": video_latents_dir,
                     "prompts_dir": prompts_dir,
                     "prompt_embeds_dir": prompt_embeds_dir,
+                    "prompt_attention_mask_dir": prompt_attention_mask_dir,
                     "images": images,
                     "image_latents": image_latents,
                     "videos": videos,
                     "video_latents": video_latents,
                     "prompts": prompts,
                     "prompt_embeds": prompt_embeds,
+                    "prompt_attention_mask": prompt_attention_mask,
                 }
             )
 
@@ -608,6 +611,7 @@ def main():
             ("video_latents", "pt"),
             ("prompts", "txt"),
             ("prompt_embeds", "pt"),
+            ("prompt_attention_mask", "pt"),
             ("videos", "txt"),
         ]:
             tmp_subfolder = tmp_dir.joinpath(subfolder)
@@ -660,6 +664,7 @@ def main():
                 data = {
                     "prompt": prompt,
                     "prompt_embed": f"prompt_embeds/{stem}.pt",
+                    "prompt_attention_mask": f"prompt_attention_mask/{stem}.pt",
                     "image": f"images/{stem}.png",
                     "image_latent": f"image_latents/{stem}.pt",
                     "video": f"videos/{stem}.mp4",
