@@ -144,6 +144,7 @@ class VideoDataset(Dataset):
             }
         else:
             image, video, _ = self._preprocess_video(self.video_paths[index])
+            
             return {
                 "prompt": self.id_token + self.prompts[index],
                 "image": image,
@@ -280,6 +281,7 @@ class VideoDatasetWithResizing(VideoDataset):
             )
 
             frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
+            
             frames = video_reader.get_batch(frame_indices)
             frames = frames[:nearest_frame_bucket].float()
             frames = frames.permute(0, 3, 1, 2).contiguous()
