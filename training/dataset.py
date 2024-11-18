@@ -22,8 +22,8 @@ decord.bridge.set_bridge("torch")
 logger = get_logger(__name__)
 
 HEIGHT_BUCKETS = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
-WIDTH_BUCKETS = [256, 320, 384, 480, 512, 576, 720, 768, 848, 960, 1024, 1280, 1536]
-FRAME_BUCKETS = [16, 24, 32, 48, 64, 80, 84]
+WIDTH_BUCKETS = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
+FRAME_BUCKETS = [16, 24, 32, 48, 64, 80]
 
 
 class VideoDataset(Dataset):
@@ -144,17 +144,16 @@ class VideoDataset(Dataset):
             }
         else:
             image, video, _ = self._preprocess_video(self.video_paths[index])
-            if video is not None:
-                return {
-                    "prompt": self.id_token + self.prompts[index],
-                    "image": image,
-                    "video": video,
-                    "video_metadata": {
-                        "num_frames": video.shape[0],
-                        "height": video.shape[2],
-                        "width": video.shape[3],
-                    },
-                }
+            return {
+                "prompt": self.id_token + self.prompts[index],
+                "image": image,
+                "video": video,
+                "video_metadata": {
+                    "num_frames": video.shape[0],
+                    "height": video.shape[2],
+                    "width": video.shape[3],
+                },
+            }
 
     def _load_dataset_from_local_path(self) -> Tuple[List[str], List[str]]:
         if not self.data_root.exists():
@@ -276,13 +275,9 @@ class VideoDatasetWithResizing(VideoDataset):
         else:
             video_reader = decord.VideoReader(uri=path.as_posix())
             video_num_frames = len(video_reader)
-
             nearest_frame_bucket = min(
                 self.frame_buckets, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
             )
-            if video_num_frames < nearest_frame_bucket:
-                # TODO: we could handle this by padding zero frames or duplicating the existing frames?
-                return None, None, None
             
             frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
             frames = video_reader.get_batch(frame_indices)
