@@ -3,8 +3,10 @@ import inspect
 from typing import Optional, Tuple, Union
 
 import torch
+from accelerate import Accelerator
 from accelerate.logging import get_logger
 from diffusers.models.embeddings import get_3d_rotary_pos_embed
+from diffusers.utils.torch_utils import is_compiled_module
 
 
 logger = get_logger(__name__)
@@ -233,3 +235,9 @@ def print_memory(device: Union[str, torch.device]) -> None:
     print(f"{memory_allocated=:.3f} GB")
     print(f"{max_memory_allocated=:.3f} GB")
     print(f"{max_memory_reserved=:.3f} GB")
+
+
+def unwrap_model(accelerator: Accelerator, model):
+    model = accelerator.unwrap_model(model)
+    model = model._orig_mod if is_compiled_module(model) else model
+    return model
