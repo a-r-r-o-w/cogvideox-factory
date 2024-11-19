@@ -321,8 +321,11 @@ def serialize_artifacts(
     prompt_embeds: Optional[torch.Tensor] = None,
     prompt_attention_mask: Optional[torch.Tensor] = None
 ) -> None:
-    num_frames, height, width = videos.size(1), videos.size(3), videos.size(4)
-    metadata = [{"num_frames": num_frames, "height": height, "width": width}]
+    metadata = []
+    for i in range(videos.size(0)):
+        video = videos[i:i+1]
+        metadata_dict = {"num_frames": video.size(1), "height": video.size(3), "width": video.size(4)}
+        metadata.append(metadata_dict)
 
     data_folder_mapper_list = [
         (images, images_dir, lambda img, path: save_image(img[0], path), "png"),
@@ -542,7 +545,6 @@ def main():
                         video_latents = vae._encode(videos)
 
                     video_latents = video_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
-                    print(f"{video_latents.shape=}")
 
                     # Encode prompts
                     prompt_embeds, prompt_attention_mask = compute_prompt_embeddings(
@@ -554,7 +556,6 @@ def main():
                         weight_dtype,
                         requires_grad=False,
                     )
-                    print(f"{prompt_attention_mask.shape=}")
 
             if images is not None:
                 images = (images.permute(0, 2, 1, 3, 4) + 1) / 2

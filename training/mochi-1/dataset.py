@@ -128,9 +128,7 @@ class VideoDataset(Dataset):
             # temporal compression factor is 6. Initially, the VAE encodings will have
             # 24 latent number of frames. So, if we were to train with a 
             # max frame size of 84 and frame bucket of [84], we need to have the following logic.
-            # print(f"{video_latents.shape=}")
             latent_num_frames = video_latents.size(0)
-            # print(f"{latent_num_frames=}") 
             num_frames = (latent_num_frames // 2) * (VAE_TEMPORAL_SCALE_FACTOR + 1)
 
             height = video_latents.size(2) * VAE_SPATIAL_SCALE_FACTOR
@@ -288,11 +286,10 @@ class VideoDatasetWithResizing(VideoDataset):
             video_num_frames = len(video_reader)
 
             nearest_frame_bucket = min(
-                self.frame_buckets, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
+                [bucket for bucket in self.frame_buckets if bucket <= video_num_frames],
+                key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)),
+                default=1,
             )
-            if video_num_frames < nearest_frame_bucket:
-                # TODO: we could handle this by padding zero frames or duplicating the existing frames?
-                return None, None, None
             
             frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
             frames = video_reader.get_batch(frame_indices)
@@ -355,10 +352,10 @@ class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
             video_reader = decord.VideoReader(uri=path.as_posix())
             video_num_frames = len(video_reader)
             nearest_frame_bucket = min(
-                self.frame_buckets, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
+                [bucket for bucket in self.frame_buckets if bucket <= video_num_frames],
+                key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)),
+                default=1,
             )
-            if video_num_frames < nearest_frame_bucket:
-                return None, None, None
 
             frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
 

@@ -354,7 +354,7 @@ def main(args):
         r=args.rank,
         lora_alpha=args.lora_alpha,
         init_lora_weights=True,
-        target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+        target_modules=args.target_modules,
     )
     transformer.add_adapter(transformer_lora_config)
 

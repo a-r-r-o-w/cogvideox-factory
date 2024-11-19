@@ -11,11 +11,11 @@ VIDEO_COLUMN="videos.txt"
 OUTPUT_DIR="/home/sayak/cogvideox-factory/video-dataset-disney/mochi-1/preprocessed-dataset"
 HEIGHT_BUCKETS="480"
 WIDTH_BUCKETS="848"
-FRAME_BUCKETS="84"
+FRAME_BUCKETS="1 84"
 MAX_NUM_FRAMES="84"
 MAX_SEQUENCE_LENGTH=256
 TARGET_FPS=30
-BATCH_SIZE=1
+BATCH_SIZE=4
 DTYPE=fp32
 
 # To create a folder-style dataset structure without pre-encoding videos and captions
@@ -35,6 +35,7 @@ CMD_WITHOUT_PRE_ENCODING="\
       --max_sequence_length $MAX_SEQUENCE_LENGTH \
       --target_fps $TARGET_FPS \
       --batch_size $BATCH_SIZE \
+      --use_slicing \
       --dtype $DTYPE
 "
 

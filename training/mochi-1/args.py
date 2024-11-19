@@ -152,6 +152,13 @@ def _get_training_args(parser: argparse.ArgumentParser) -> None:
         help="The lora_alpha to compute scaling factor (lora_alpha / rank) for LoRA matrices.",
     )
     parser.add_argument(
+        "--target_modules",
+        nargs="+",
+        type=str,
+        default=["to_k", "to_q", "to_v", "to_out.0"],
+        help="Target modules to train LoRA for."
+    )
+    parser.add_argument(
         "--mixed_precision",
         type=str,
         default=None,
