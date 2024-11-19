@@ -21,16 +21,18 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
 from transformers import T5EncoderModel, T5Tokenizer
+from dataset_mochi import VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop
 
 
 import decord  # isort:skip
 
-import sys
-sys.path.append(".")
-from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
-
-
 decord.bridge.set_bridge("torch")
+
+import sys
+sys.path.append("..")
+
+from dataset import BucketSampler
+
 
 logger = get_logger(__name__)
 

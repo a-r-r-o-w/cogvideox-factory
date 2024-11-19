@@ -54,11 +54,12 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
 
 from args import get_args  # isort:skip
+from dataset_mochi import VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
 
 import sys
-sys.path.append(".")
+sys.path.append("..")
 
-from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
+from dataset import BucketSampler # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
 from utils import get_gradient_norm, get_optimizer, print_memory, reset_memory  # isort:skip
 
