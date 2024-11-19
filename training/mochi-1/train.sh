@@ -26,7 +26,7 @@ cmd="accelerate launch --config_file deepspeed.yaml --gpu_ids $GPU_IDS text_to_v
   --rank 64 \
   --lora_alpha 64 \
   --mixed_precision bf16 \
-  --output_dir mochi-lora \
+  --output_dir /raid/.cache/huggingface/sayak/mochi-lora/ \
   --max_num_frames 84 \
   --train_batch_size 1 \
   --dataloader_num_workers 4 \

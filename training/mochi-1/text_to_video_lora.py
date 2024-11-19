@@ -309,6 +309,7 @@ def main(args):
         variant=args.variant,
     )
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    # noise_scheduler_copy = FlowMatchEulerDiscreteScheduler.from_config(scheduler.config, invert_sigmas=False)
     noise_scheduler_copy = copy.deepcopy(scheduler)
 
     vae_config = AutoencoderKLMochi.load_config(args.pretrained_model_name_or_path, subfolder="vae")
@@ -633,7 +634,8 @@ def main(args):
         sigmas = noise_scheduler_copy.sigmas.to(device=accelerator.device, dtype=dtype)
         schedule_timesteps = noise_scheduler_copy.timesteps.to(accelerator.device)
         timesteps = timesteps.to(accelerator.device)
-        step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
+        # notice the reverse.
+        step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps][::-1]
 
         sigma = sigmas[step_indices].flatten()
         while len(sigma.shape) < n_dim:
@@ -660,7 +662,6 @@ def main(args):
                     latent_dist = DiagonalGaussianDistribution(videos)
 
                 videos = latent_dist.sample() 
-                videos = videos[:, :vae_in_channels, ...] # to respect `in_channels` for the vae
                 if has_latents_mean and has_latents_std:
                     latents_mean = (
                         torch.tensor(vae_config["latents_mean"]).view(1, vae_in_channels, 1, 1, 1).to(videos.device, videos.dtype)
@@ -705,7 +706,6 @@ def main(args):
                 )
                 indices = (u * noise_scheduler_copy.config.num_train_timesteps).long()
                 timesteps = noise_scheduler_copy.timesteps[indices].to(device=model_input.device)
-                # print(f"{timesteps=}")
 
                 # Add noise according to flow matching.
                 # zt = (1 - texp) * x + texp * z1
