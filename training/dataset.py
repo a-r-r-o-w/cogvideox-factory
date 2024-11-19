@@ -49,7 +49,7 @@ class VideoDataset(Dataset):
         self.caption_column = caption_column
         self.video_column = video_column
         self.max_num_frames = max_num_frames
-        self.id_token = id_token or ""
+        self.id_token = f"{id_token.strip()} " if id_token else ""
         self.height_buckets = height_buckets or HEIGHT_BUCKETS
         self.width_buckets = width_buckets or WIDTH_BUCKETS
         self.frame_buckets = frame_buckets or FRAME_BUCKETS
@@ -277,9 +277,7 @@ class VideoDatasetWithResizing(VideoDataset):
             video_reader = decord.VideoReader(uri=path.as_posix())
             video_num_frames = len(video_reader)
             nearest_frame_bucket = min(
-                [bucket for bucket in self.frame_buckets if bucket <= video_num_frames],
-                key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)),
-                default=1,
+                self.frame_buckets, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
             )
 
             frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
@@ -344,9 +342,7 @@ class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
             video_reader = decord.VideoReader(uri=path.as_posix())
             video_num_frames = len(video_reader)
             nearest_frame_bucket = min(
-                [bucket for bucket in self.frame_buckets if bucket <= video_num_frames],
-                key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)),
-                default=1,
+                self.frame_buckets, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
             )
 
             frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
