@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torchvision.transforms as TT
 from accelerate.logging import get_logger
-from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.functional import resize
 
