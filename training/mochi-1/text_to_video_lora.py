@@ -483,6 +483,7 @@ def main(args):
         use_cpu_offload_optimizer=args.use_cpu_offload_optimizer,
         offload_gradients=args.offload_gradients,
     )
+    accelerator.print(f"Using {optimizer.__class__.__name__} optimizer.")
 
     # Dataset and DataLoader
     dataset_init_kwargs = {
@@ -635,9 +636,12 @@ def main(args):
         schedule_timesteps = noise_scheduler_copy.timesteps.to(accelerator.device)
         timesteps = timesteps.to(accelerator.device)
         # notice the reverse.
-        step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps][::-1]
+        step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
 
         sigma = sigmas[step_indices].flatten()
+        if "invert_sigmas" in noise_scheduler_copy.config and noise_scheduler_copy.config.invert_sigmas:
+            # https://github.com/huggingface/diffusers/blob/99c0483b67427de467f11aa35d54678fd36a7ea2/src/diffusers/schedulers/scheduling_flow_match_euler_discrete.py#L209
+            sigma = 1.0 - sigma
         while len(sigma.shape) < n_dim:
             sigma = sigma.unsqueeze(-1)
         return sigma
@@ -938,7 +942,7 @@ def main(args):
                 repo_id=repo_id,
                 folder_path=args.output_dir,
                 commit_message="End of training",
-                ignore_patterns=["step_*", "epoch_*"],
+                ignore_patterns=["step_*", "epoch_*", "*.bin"],
             )
 
     accelerator.end_training()

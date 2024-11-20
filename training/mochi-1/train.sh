@@ -34,13 +34,13 @@ cmd="accelerate launch --config_file deepspeed.yaml --gpu_ids $GPU_IDS text_to_v
   --checkpointing_steps 50 \
   --gradient_accumulation_steps 4 \
   --gradient_checkpointing \
-  --learning_rate 0.0001 \
+  --learning_rate 1e-5 \
   --lr_scheduler constant \
   --lr_warmup_steps 0 \
   --lr_num_cycles 1 \
   --enable_slicing \
   --enable_tiling \
-  --optimizer adamw \
+  --optimizer adamw --use_8bit \
   --beta1 0.9 \
   --beta2 0.95 \
   --beta3 0.99 \

@@ -369,7 +369,7 @@ def _get_optimizer_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--beta2",
         type=float,
-        default=0.95,
+        default=0.999,
         help="The beta2 parameter for the Adam and Prodigy optimizers.",
     )
     parser.add_argument(
