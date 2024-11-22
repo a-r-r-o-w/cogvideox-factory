@@ -3,10 +3,11 @@ from typing import Any, Dict, Tuple
 
 import numpy as np
 import torch
-import torchvision.transforms as TT
+from torchvision import transforms
 from accelerate.logging import get_logger
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.functional import resize
+import torch.nn as nn
 
 
 # Must import after torch because this can sometimes lead to a nasty segmentation fault, or stack smashing error
@@ -25,7 +26,7 @@ logger = get_logger(__name__)
 # TODO (sayakpaul): probably not all buckets are needed for Mochi-1? 
 HEIGHT_BUCKETS = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
 WIDTH_BUCKETS = [256, 320, 384, 480, 512, 576, 720, 768, 848, 960, 1024, 1280, 1536]
-FRAME_BUCKETS = [16, 24, 32, 48, 64, 80, 84]
+FRAME_BUCKETS = [16, 24, 32, 48, 64, 80, 85]
 
 VAE_SPATIAL_SCALE_FACTOR = 8
 VAE_TEMPORAL_SCALE_FACTOR = 6
@@ -33,6 +34,19 @@ VAE_TEMPORAL_SCALE_FACTOR = 6
 class VideoDataset(VDS):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+
+        random_flip = kwargs.get("random_flip", None)
+        self.video_transforms = transforms.Compose(
+            [
+                transforms.RandomHorizontalFlip([(random_flip)])
+                if random_flip
+                else transforms.Lambda(lambda x: x),
+                transforms.Lambda(self.scale_transform),
+            ]
+        )
+
+    def scale_transform(self, x):
+        return x / 127.5 - 1.0
 
     # Overriding this because we calculate `num_frames` differently.
     def __getitem__(self, index: int) -> Dict[str, Any]:
@@ -55,9 +69,9 @@ class VideoDataset(VDS):
             # Output of the VAE encoding is 2 * output_channels and then it's
             # temporal compression factor is 6. Initially, the VAE encodings will have
             # 24 latent number of frames. So, if we were to train with a 
-            # max frame size of 84 and frame bucket of [84], we need to have the following logic.
+            # max frame size of 85 and frame bucket of [85], we need to have the following logic.
             latent_num_frames = video_latents.size(0)
-            num_frames = (latent_num_frames // 2) * (VAE_TEMPORAL_SCALE_FACTOR + 1)
+            num_frames = ((latent_num_frames // 2) * (VAE_TEMPORAL_SCALE_FACTOR + 1) + 1)
 
             height = video_latents.size(2) * VAE_SPATIAL_SCALE_FACTOR
             width = video_latents.size(3) * VAE_SPATIAL_SCALE_FACTOR
@@ -135,13 +149,13 @@ class VideoDataset(VDS):
         return images, latents, embeds, attention_masks
 
 
-# We need the `VideoDatasetWithResizing` and `VideoDatasetWithResizeAndRectangleCrop` classes to subclass from
-# the new `VideoDataset` class defined in this file. And also because of the changes in 
-# `_preprocess_video()` (how we handle `nearest_frame_bucket`). 
 
-class VideoDatasetWithResizing(VideoDataset):
-    def __init__(self, *args, **kwargs) -> None:
+class VideoDatasetWithFlexibleResize(VideoDataset):
+    def __init__(self, video_reshape_mode: str = None, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        if video_reshape_mode:
+            assert video_reshape_mode in ["center", "random"]
+        self.video_reshape_mode = video_reshape_mode
 
     def _preprocess_video(self, path: Path) -> torch.Tensor:
         if self.load_tensors:
@@ -151,36 +165,56 @@ class VideoDatasetWithResizing(VideoDataset):
             video_num_frames = len(video_reader)
 
             nearest_frame_bucket = min(
-                [bucket for bucket in self.frame_buckets if bucket <= video_num_frames],
-                key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)),
-                default=1,
+                self.frame_buckets, key=lambda x: abs(x - min(video_num_frames, self.max_num_frames))
             )
-            
-            frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
+            frame_indices = list(
+                range(
+                    0, 
+                    video_num_frames, 
+                    1 if video_num_frames < nearest_frame_bucket else video_num_frames // nearest_frame_bucket
+                )
+            )
             frames = video_reader.get_batch(frame_indices)
-            frames = frames[:nearest_frame_bucket].float()
+            
+            # Pad or truncate frames to match the bucket size
+            if video_num_frames < nearest_frame_bucket:
+                pad_size = nearest_frame_bucket - video_num_frames
+                frames = nn.functional.pad(frames, (0, 0, 0, 0, 0, 0, 0, pad_size))
+                frames = frames.float()
+            else:
+                frames = frames[:nearest_frame_bucket].float()
             frames = frames.permute(0, 3, 1, 2).contiguous()
 
+            # Find nearest resolution and apply resizing
             nearest_res = self._find_nearest_resolution(frames.shape[2], frames.shape[3])
-            frames_resized = torch.stack([resize(frame, nearest_res) for frame in frames], dim=0)
-            frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
+            if self.video_reshape_mode in {"center", "random"}:
+                frames = self._resize_for_rectangle_crop(frames, nearest_res)
+            else:
+                frames = torch.stack([resize(frame, nearest_res) for frame in frames], dim=0)
 
+            # Apply transformations
+            frames = torch.stack([self.video_transforms(frame) for frame in frames], dim=0)
+
+            # Optionally extract the first frame as an image
             image = frames[:1].clone() if self.image_to_video else None
 
             return image, frames, None
 
-    def _find_nearest_resolution(self, height, width):
+    def _find_nearest_resolution(self, height: int, width: int) -> Tuple[int, int]:
+        """
+        Find the nearest resolution from the predefined list of resolutions.
+        """
         nearest_res = min(self.resolutions, key=lambda x: abs(x[1] - height) + abs(x[2] - width))
         return nearest_res[1], nearest_res[2]
 
-
-class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
-    def __init__(self, video_reshape_mode: str = "center", *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.video_reshape_mode = video_reshape_mode
-
-    def _resize_for_rectangle_crop(self, arr, image_size):
-        reshape_mode = self.video_reshape_mode
+    def _resize_for_rectangle_crop(self, arr: torch.Tensor, image_size: Tuple[int, int]) -> torch.Tensor:
+        """
+        Resize frames for rectangular cropping.
+        
+        Args:
+            arr (torch.Tensor): The video frames tensor [N, C, H, W].
+            image_size (Tuple[int, int]): The target resolution (height, width).
+        """
         if arr.shape[3] / arr.shape[2] > image_size[1] / image_size[0]:
             arr = resize(
                 arr,
@@ -194,48 +228,15 @@ class VideoDatasetWithResizeAndRectangleCrop(VideoDataset):
                 interpolation=InterpolationMode.BICUBIC,
             )
 
+        # Perform cropping
         h, w = arr.shape[2], arr.shape[3]
-        arr = arr.squeeze(0)
+        delta_h, delta_w = h - image_size[0], w - image_size[1]
 
-        delta_h = h - image_size[0]
-        delta_w = w - image_size[1]
-
-        if reshape_mode == "random" or reshape_mode == "none":
-            top = np.random.randint(0, delta_h + 1)
-            left = np.random.randint(0, delta_w + 1)
-        elif reshape_mode == "center":
+        if self.video_reshape_mode == "random":
+            top, left = np.random.randint(0, delta_h + 1), np.random.randint(0, delta_w + 1)
+        elif self.video_reshape_mode == "center":
             top, left = delta_h // 2, delta_w // 2
         else:
-            raise NotImplementedError
-        arr = TT.functional.crop(arr, top=top, left=left, height=image_size[0], width=image_size[1])
-        return arr
+            raise NotImplementedError(f"Unsupported reshape mode: {self.video_reshape_mode}")
 
-    def _preprocess_video(self, path: Path) -> torch.Tensor:
-        if self.load_tensors:
-            return self._load_preprocessed_latents_and_embeds(path)
-        else:
-            video_reader = decord.VideoReader(uri=path.as_posix())
-            video_num_frames = len(video_reader)
-            nearest_frame_bucket = min(
-                [bucket for bucket in self.frame_buckets if bucket <= video_num_frames],
-                key=lambda x: abs(x - min(video_num_frames, self.max_num_frames)),
-                default=1,
-            )
-
-            frame_indices = list(range(0, video_num_frames, video_num_frames // nearest_frame_bucket))
-
-            frames = video_reader.get_batch(frame_indices)
-            frames = frames[:nearest_frame_bucket].float()
-            frames = frames.permute(0, 3, 1, 2).contiguous()
-
-            nearest_res = self._find_nearest_resolution(frames.shape[2], frames.shape[3])
-            frames_resized = self._resize_for_rectangle_crop(frames, nearest_res)
-            frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
-
-            image = frames[:1].clone() if self.image_to_video else None
-
-            return image, frames, None
-
-    def _find_nearest_resolution(self, height, width):
-        nearest_res = min(self.resolutions, key=lambda x: abs(x[1] - height) + abs(x[2] - width))
-        return nearest_res[1], nearest_res[2]
+        return transforms.functional.crop(arr, top=top, left=left, height=image_size[0], width=image_size[1])

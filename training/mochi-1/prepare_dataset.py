@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
 from transformers import T5EncoderModel, T5Tokenizer
-from dataset_mochi import VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop
+from dataset_mochi import VideoDatasetWithFlexibleResize
 
 
 import decord  # isort:skip
@@ -326,6 +326,8 @@ def serialize_artifacts(
     metadata = []
     for i in range(videos.size(0)):
         video = videos[i:i+1]
+        if video.size(1) == 1:
+            print(f"{video_latents[i:i+1].shape=}")
         metadata_dict = {"num_frames": video.size(1), "height": video.size(3), "width": video.size(4)}
         metadata.append(metadata_dict)
 
@@ -421,6 +423,7 @@ def main():
     dataset_init_kwargs = {
         "data_root": args.data_root,
         "dataset_file": args.dataset_file,
+        "video_reshape_mode": args.video_reshape_mode,
         "caption_column": args.caption_column,
         "video_column": args.video_column,
         "max_num_frames": args.max_num_frames,
@@ -432,13 +435,7 @@ def main():
         "random_flip": args.random_flip,
         "image_to_video": args.save_image_latents,
     }
-    if args.video_reshape_mode is None:
-        dataset = VideoDatasetWithResizing(**dataset_init_kwargs)
-    else:
-        dataset = VideoDatasetWithResizeAndRectangleCrop(
-            video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
-        )
-
+    dataset = VideoDatasetWithFlexibleResize(**dataset_init_kwargs)
     original_dataset_size = len(dataset)
 
     # Split data among GPUs

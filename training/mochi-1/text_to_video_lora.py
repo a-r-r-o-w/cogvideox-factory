@@ -54,7 +54,7 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
 
 from args import get_args  # isort:skip
-from dataset_mochi import VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
+from dataset_mochi import VideoDatasetWithFlexibleResize  # isort:skip
 
 import sys
 sys.path.append("..")
@@ -309,7 +309,6 @@ def main(args):
         variant=args.variant,
     )
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    # noise_scheduler_copy = FlowMatchEulerDiscreteScheduler.from_config(scheduler.config, invert_sigmas=False)
     noise_scheduler_copy = copy.deepcopy(scheduler)
 
     vae_config = AutoencoderKLMochi.load_config(args.pretrained_model_name_or_path, subfolder="vae")
@@ -347,7 +346,8 @@ def main(args):
         )
     
     transformer.requires_grad_(False)
-    transformer.to(accelerator.device, dtype=weight_dtype)
+    # transformer.to(accelerator.device, dtype=weight_dtype)
+    transformer.to(accelerator.device)
     if args.gradient_checkpointing:
         transformer.enable_gradient_checkpointing()
 
@@ -423,9 +423,8 @@ def main(args):
         # Make sure the trainable params are in float32. This is again needed since the base models
         # are in `weight_dtype`. More details:
         # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
-        if args.mixed_precision == "fp16":
-            # only upcast trainable parameters (LoRA) into fp32
-            cast_training_params([transformer_])
+        # only upcast trainable parameters (LoRA) into fp32
+        cast_training_params([transformer_])
 
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
@@ -439,11 +438,8 @@ def main(args):
         args.learning_rate = (
             args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
-
-    # Make sure the trainable params are in float32.
-    if args.mixed_precision == "fp16":
-        # only upcast trainable parameters (LoRA) into fp32
-        cast_training_params([transformer], dtype=torch.float32)
+    # only upcast trainable parameters (LoRA) into fp32
+    cast_training_params([transformer], dtype=torch.float32)
 
     transformer_lora_parameters = list(filter(lambda p: p.requires_grad, transformer.parameters()))
 
@@ -488,6 +484,7 @@ def main(args):
     # Dataset and DataLoader
     dataset_init_kwargs = {
         "data_root": args.data_root,
+        "video_reshape_mode": args.video_reshape_mode,
         "dataset_file": args.dataset_file,
         "caption_column": args.caption_column,
         "video_column": args.video_column,
@@ -499,15 +496,8 @@ def main(args):
         "load_tensors": args.load_tensors,
         "random_flip": args.random_flip,
     }
-    if args.video_reshape_mode is None:
-        train_dataset = VideoDatasetWithResizing(**dataset_init_kwargs)
-    else:
-        train_dataset = VideoDatasetWithResizeAndRectangleCrop(
-            video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
-        )
-
+    train_dataset = VideoDatasetWithFlexibleResize(**dataset_init_kwargs)
     collate_fn = CollateFunction(weight_dtype, args.load_tensors)
-
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=1,
@@ -635,7 +625,6 @@ def main(args):
         sigmas = noise_scheduler_copy.sigmas.to(device=accelerator.device, dtype=dtype)
         schedule_timesteps = noise_scheduler_copy.timesteps.to(accelerator.device)
         timesteps = timesteps.to(accelerator.device)
-        # notice the reverse.
         step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
 
         sigma = sigmas[step_indices].flatten()
@@ -944,6 +933,7 @@ def main(args):
                 commit_message="End of training",
                 ignore_patterns=["step_*", "epoch_*", "*.bin", "*.pt"],
             )
+            accelerator.print(f"Params pushed to {repo_id}.")
 
     accelerator.end_training()
 
