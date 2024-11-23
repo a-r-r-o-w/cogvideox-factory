@@ -662,6 +662,7 @@ def main(args):
                         num_frames=num_frames,
                         vae_scale_factor_spatial=VAE_SCALE_FACTOR_SPATIAL,
                         patch_size=model_config.patch_size,
+                        patch_size_t=model_config.patch_size_t if hasattr(model_config, "patch_size_t") else None,
                         attention_head_dim=model_config.attention_head_dim,
                         device=accelerator.device,
                     )
