@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import gc
+import json
 import logging
 import math
 import os
@@ -26,7 +28,6 @@ import diffusers
 import torch
 import transformers
 import wandb
-import copy
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -43,7 +44,11 @@ from diffusers import (
 )
 from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from diffusers.optimization import get_scheduler
-from diffusers.training_utils import cast_training_params, compute_density_for_timestep_sampling, compute_loss_weighting_for_sd3
+from diffusers.training_utils import (
+    cast_training_params,
+    compute_density_for_timestep_sampling,
+    compute_loss_weighting_for_sd3,
+)
 from diffusers.utils import convert_unet_state_dict_to_peft, export_to_video
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.torch_utils import is_compiled_module
@@ -53,10 +58,13 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
 
+
 from args import get_args  # isort:skip
 from dataset_mochi import VideoDatasetWithFlexibleResize  # isort:skip
 
 import sys
+
+
 sys.path.append("..")
 
 from dataset import BucketSampler # isort:skip
@@ -78,7 +86,7 @@ def save_model_card(
     widget_dict = []
     if videos is not None and len(videos) > 0:
         for i, video in enumerate(videos):
-            export_to_video(video, os.path.join(repo_folder, f"final_video_{i}.mp4", fps=fps))
+            export_to_video(video, os.path.join(repo_folder, f"final_video_{i}.mp4"), fps=fps)
             widget_dict.append(
                 {
                     "text": validation_prompt if validation_prompt else " ",
@@ -147,7 +155,8 @@ def log_validation(
         f"Running validation... \n Generating {args.num_validation_videos} videos with prompt: {pipeline_args['prompt']}."
     )
 
-    pipe = pipe.to(accelerator.device)
+    if not args.enable_model_cpu_offload:
+        pipe = pipe.to(accelerator.device)
 
     # run inference
     generator = torch.Generator(device=accelerator.device).manual_seed(args.seed) if args.seed else None
@@ -261,7 +270,7 @@ def main(args):
         set_seed(args.seed)
 
     # Handle the repository creation
-    if accelerator.is_main_process:
+    if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
@@ -283,7 +292,7 @@ def main(args):
             subfolder="text_encoder",
             revision=args.revision,
         )
-        
+
         vae = AutoencoderKLMochi.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="vae",
@@ -295,10 +304,11 @@ def main(args):
         if args.enable_tiling:
             vae.enable_tiling()
 
+        # keep things in FP32.
         text_encoder.requires_grad_(False)
-        text_encoder.to(accelerator.device, dtype=weight_dtype)
+        text_encoder.to(accelerator.device, dtype=torch.float32)
         vae.requires_grad_(False)
-        vae.to(accelerator.device, dtype=weight_dtype)
+        vae.to(accelerator.device, dtype=torch.float32)
 
     load_dtype = torch.bfloat16 if "5b" in args.pretrained_model_name_or_path.lower() else torch.float16
     transformer = MochiTransformer3DModel.from_pretrained(
@@ -315,7 +325,7 @@ def main(args):
     vae_in_channels = vae_config["latent_channels"]
     has_latents_mean = "latents_mean" in vae_config and vae_config["latents_mean"] is not None
     has_latents_std = "latents_std" in vae_config and vae_config["latents_std"] is not None
-    
+
     VAE_SCALING_FACTOR = vae_config["scaling_factor"]
 
     # For mixed precision training we cast all non-trainable weights (vae, text_encoder and transformer) to half-precision
@@ -344,10 +354,10 @@ def main(args):
         raise ValueError(
             "Mixed precision training with bfloat16 is not supported on MPS. Please use fp16 (recommended) or fp32 instead."
         )
-    
+
+    # keep the transformer in FP32.
     transformer.requires_grad_(False)
-    # transformer.to(accelerator.device, dtype=weight_dtype)
-    transformer.to(accelerator.device)
+    transformer.to(accelerator.device, torch.float32)
     if args.gradient_checkpointing:
         transformer.enable_gradient_checkpointing()
 
@@ -355,7 +365,7 @@ def main(args):
     transformer_lora_config = LoraConfig(
         r=args.rank,
         lora_alpha=args.lora_alpha,
-        init_lora_weights=True,
+        init_lora_weights="gaussian",
         target_modules=args.target_modules,
     )
     transformer.add_adapter(transformer_lora_config)
@@ -482,6 +492,18 @@ def main(args):
     accelerator.print(f"Using {optimizer.__class__.__name__} optimizer.")
 
     # Dataset and DataLoader
+    if args.load_tensors and args.id_token:
+        with open(os.path.join(args.data_root, "data.jsonl")) as f:
+            contents = [json.loads(jline) for jline in f.read().splitlines()]
+            parsed_id_token = None
+            for content in contents:
+                if "id_token" in content:
+                    parsed_id_token = content["id_token"]
+            if parsed_id_token is not None and parsed_id_token.strip() != args.id_token.strip():
+                raise ValueError(
+                    f"Parsed `id_token` from serialized metadata is {parsed_id_token} and provided `id_token` is {args.id_token}. They should match."
+                )
+
     dataset_init_kwargs = {
         "data_root": args.data_root,
         "video_reshape_mode": args.video_reshape_mode,
@@ -497,7 +519,8 @@ def main(args):
         "random_flip": args.random_flip,
     }
     train_dataset = VideoDatasetWithFlexibleResize(**dataset_init_kwargs)
-    collate_fn = CollateFunction(weight_dtype, args.load_tensors)
+    # keeping things in FP32 for now.
+    collate_fn = CollateFunction(weight_dtype=torch.float32, load_tensors=args.load_tensors)
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=1,
@@ -619,7 +642,6 @@ def main(args):
     if args.load_tensors:
         gc.collect()
         torch.cuda.empty_cache()
-        torch.cuda.synchronize(accelerator.device)
 
     def get_sigmas(timesteps, n_dim=4, dtype=torch.float32):
         sigmas = noise_scheduler_copy.sigmas.to(device=accelerator.device, dtype=dtype)
@@ -650,11 +672,11 @@ def main(args):
                 # Encode videos
                 if not args.load_tensors:
                     videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
-                    latent_dist = vae.encode(videos).latent_dist
+                    latent_dist = vae.encode(videos.to(vae.dtype)).latent_dist
                 else:
                     latent_dist = DiagonalGaussianDistribution(videos)
 
-                videos = latent_dist.sample() 
+                videos = latent_dist.sample()
                 if has_latents_mean and has_latents_std:
                     latents_mean = (
                         torch.tensor(vae_config["latents_mean"]).view(1, vae_in_channels, 1, 1, 1).to(videos.device, videos.dtype)
@@ -665,8 +687,9 @@ def main(args):
                     videos = (videos - latents_mean) * VAE_SCALING_FACTOR / latents_std
                 else:
                     videos = videos * VAE_SCALING_FACTOR
-                
-                videos = videos.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
+
+                # keep in FP32 for now.
+                videos = videos.to(memory_format=torch.contiguous_format, dtype=torch.float32)
                 model_input = videos
 
                 # Encode prompts
@@ -677,11 +700,11 @@ def main(args):
                         prompts,
                         model_config.max_text_seq_length,
                         accelerator.device,
-                        weight_dtype,
+                        weight_dtype=weight_dtype,
                         requires_grad=False,
                     )
                 else:
-                    prompt_embeds = prompts.to(dtype=weight_dtype)
+                    prompt_embeds = prompts.to(weight_dtype)
                     prompt_attention_mask = prompt_attention_mask.to(accelerator.device)
 
                 # Sample noise that will be added to the latents
@@ -697,15 +720,25 @@ def main(args):
                     logit_std=args.logit_std,
                     mode_scale=args.mode_scale,
                 )
-                indices = (u * noise_scheduler_copy.config.num_train_timesteps).long()
-                timesteps = noise_scheduler_copy.timesteps[indices].to(device=model_input.device)
+                # indices = (u * noise_scheduler_copy.config.num_train_timesteps).long()
+                # timesteps = noise_scheduler_copy.timesteps[indices].to(device=model_input.device)
+                # revisit.
+                timesteps = (u * noise_scheduler_copy.config.num_train_timesteps)
 
                 # Add noise according to flow matching.
                 # zt = (1 - texp) * x + texp * z1
-                sigmas = get_sigmas(timesteps, n_dim=model_input.ndim, dtype=model_input.dtype)
-                noisy_model_input = (1.0 - sigmas) * model_input + sigmas * noise
+                sigmas = get_sigmas(
+                    timesteps=noise_scheduler_copy.timesteps[timesteps.long()].to(device=model_input.device),
+                    n_dim=model_input.ndim,
+                    dtype=model_input.dtype
+                )
+                noisy_model_input = (1.0 - sigmas) * model_input + sigmas * noise # do we need to revisit this?
+                noisy_model_input = noisy_model_input.to(weight_dtype)
 
                 # Predict the noise residual
+                actual_num_train_timesteps = float(noise_scheduler_copy.config.num_train_timesteps)
+                timesteps = (1 - (timesteps / actual_num_train_timesteps)) * actual_num_train_timesteps # revisit
+                timesteps = timesteps.to(device=model_input.device)
                 model_pred = transformer(
                     hidden_states=noisy_model_input,
                     encoder_hidden_states=prompt_embeds,
@@ -719,7 +752,8 @@ def main(args):
                 weighting = compute_loss_weighting_for_sd3(weighting_scheme=args.weighting_scheme, sigmas=sigmas)
 
                 # flow matching loss
-                target = noise - model_input
+                # target = noise - model_input
+                target = model_input - noise # as discussed with Ajay
 
                 loss = torch.mean(
                     (weighting * (model_pred.float() - target.float()) ** 2).reshape(batch_size, -1),
@@ -787,11 +821,13 @@ def main(args):
             if global_step >= args.max_train_steps:
                 break
 
-        if accelerator.is_main_process:
+        if global_step >= args.max_train_steps:
+                break
+
+        if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
             if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
                 accelerator.print("===== Memory before validation =====")
                 print_memory(accelerator.device)
-                torch.cuda.synchronize(accelerator.device)
 
                 pipe = MochiPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
@@ -799,7 +835,6 @@ def main(args):
                     scheduler=scheduler,
                     revision=args.revision,
                     variant=args.variant,
-                    # torch_dtype=weight_dtype,
                 )
 
                 if args.enable_slicing:
@@ -831,25 +866,18 @@ def main(args):
                 print_memory(accelerator.device)
                 reset_memory(accelerator.device)
 
+
+                del pipe.text_encoder
+                del pipe.vae
                 del pipe
                 gc.collect()
                 torch.cuda.empty_cache()
-                torch.cuda.synchronize(accelerator.device)
 
     accelerator.wait_for_everyone()
 
-    if accelerator.is_main_process:
+    if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
         transformer = unwrap_model(transformer)
-        dtype = (
-            torch.float16
-            if args.mixed_precision == "fp16"
-            else torch.bfloat16
-            if args.mixed_precision == "bf16"
-            else torch.float32
-        )
-        # transformer = transformer.to(dtype)
         transformer_lora_layers = get_peft_model_state_dict(transformer)
-
         MochiPipeline.save_lora_weights(
             save_directory=args.output_dir,
             transformer_lora_layers=transformer_lora_layers,
@@ -863,7 +891,6 @@ def main(args):
 
         gc.collect()
         torch.cuda.empty_cache()
-        torch.cuda.synchronize(accelerator.device)
 
         # Final test inference
         validation_outputs = []
@@ -871,14 +898,12 @@ def main(args):
             accelerator.print("===== Memory before testing =====")
             print_memory(accelerator.device)
             reset_memory(accelerator.device)
-            
+
             pipe = MochiPipeline.from_pretrained(
                 args.pretrained_model_name_or_path,
                 revision=args.revision,
                 variant=args.variant,
-                # torch_dtype=weight_dtype,
             )
-            pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config)
 
             if args.enable_slicing:
                 pipe.vae.enable_slicing()
@@ -898,7 +923,6 @@ def main(args):
                 pipeline_args = {
                     "prompt": validation_prompt,
                     "guidance_scale": 4.5,
-                    "use_dynamic_cfg": args.use_dynamic_cfg,
                     "height": args.height,
                     "width": args.width,
                 }

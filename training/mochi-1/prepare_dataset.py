@@ -8,12 +8,13 @@ import pathlib
 import queue
 import traceback
 import uuid
-from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional, Union
 
 import torch
 import torch.distributed as dist
+from dataset_mochi import VideoDatasetWithFlexibleResize
 from diffusers import AutoencoderKLMochi
 from diffusers.training_utils import set_seed
 from diffusers.utils import export_to_video, get_logger
@@ -21,7 +22,6 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
 from transformers import T5EncoderModel, T5Tokenizer
-from dataset_mochi import VideoDatasetWithFlexibleResize
 
 
 import decord  # isort:skip
@@ -29,6 +29,8 @@ import decord  # isort:skip
 decord.bridge.set_bridge("torch")
 
 import sys
+
+
 sys.path.append("..")
 
 from dataset import BucketSampler
@@ -489,11 +491,11 @@ def main():
         text_encoder = T5EncoderModel.from_pretrained(
             args.model_id, subfolder="text_encoder", torch_dtype=weight_dtype
         ).to(device)
-        
+
         vae = AutoencoderKLMochi.from_pretrained(
             args.model_id, subfolder="vae", torch_dtype=weight_dtype
         ).to(device)
-        
+
         if args.use_slicing:
             vae.enable_slicing()
         if args.use_tiling:

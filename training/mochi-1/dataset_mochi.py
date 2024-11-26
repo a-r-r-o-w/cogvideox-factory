@@ -3,11 +3,11 @@ from typing import Any, Dict, Tuple
 
 import numpy as np
 import torch
-from torchvision import transforms
+import torch.nn as nn
 from accelerate.logging import get_logger
+from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.functional import resize
-import torch.nn as nn
 
 
 # Must import after torch because this can sometimes lead to a nasty segmentation fault, or stack smashing error
@@ -16,14 +16,17 @@ import decord  # isort:skip
 
 decord.bridge.set_bridge("torch")
 
-import sys 
+import sys
+
+
 sys.path.append("..")
 
 from dataset import VideoDataset as VDS
 
+
 logger = get_logger(__name__)
 
-# TODO (sayakpaul): probably not all buckets are needed for Mochi-1? 
+# TODO (sayakpaul): probably not all buckets are needed for Mochi-1?
 HEIGHT_BUCKETS = [256, 320, 384, 480, 512, 576, 720, 768, 960, 1024, 1280, 1536]
 WIDTH_BUCKETS = [256, 320, 384, 480, 512, 576, 720, 768, 848, 960, 1024, 1280, 1536]
 FRAME_BUCKETS = [16, 24, 32, 48, 64, 80, 85]
@@ -68,7 +71,7 @@ class VideoDataset(VDS):
             # This is hardcoded for now.
             # Output of the VAE encoding is 2 * output_channels and then it's
             # temporal compression factor is 6. Initially, the VAE encodings will have
-            # 24 latent number of frames. So, if we were to train with a 
+            # 24 latent number of frames. So, if we were to train with a
             # max frame size of 85 and frame bucket of [85], we need to have the following logic.
             latent_num_frames = video_latents.size(0)
             num_frames = ((latent_num_frames // 2) * (VAE_TEMPORAL_SCALE_FACTOR + 1) + 1)
@@ -169,13 +172,13 @@ class VideoDatasetWithFlexibleResize(VideoDataset):
             )
             frame_indices = list(
                 range(
-                    0, 
-                    video_num_frames, 
+                    0,
+                    video_num_frames,
                     1 if video_num_frames < nearest_frame_bucket else video_num_frames // nearest_frame_bucket
                 )
             )
             frames = video_reader.get_batch(frame_indices)
-            
+
             # Pad or truncate frames to match the bucket size
             if video_num_frames < nearest_frame_bucket:
                 pad_size = nearest_frame_bucket - video_num_frames
@@ -210,7 +213,7 @@ class VideoDatasetWithFlexibleResize(VideoDataset):
     def _resize_for_rectangle_crop(self, arr: torch.Tensor, image_size: Tuple[int, int]) -> torch.Tensor:
         """
         Resize frames for rectangular cropping.
-        
+
         Args:
             arr (torch.Tensor): The video frames tensor [N, C, H, W].
             image_size (Tuple[int, int]): The target resolution (height, width).
