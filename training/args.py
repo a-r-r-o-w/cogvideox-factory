@@ -78,7 +78,7 @@ def _get_dataset_args(parser: argparse.ArgumentParser) -> None:
         nargs="+",
         type=int,
         default=[49],
-        help="CogVideoX1.5 need to guarantee that ((num_frames - 1) // self.vae_scale_factor_temporal + 1) % patch_size_t != 0, such as 53"
+        help="CogVideoX1.5 need to guarantee that ((num_frames - 1) // self.vae_scale_factor_temporal + 1) % patch_size_t == 0, such as 53"
     )
     parser.add_argument(
         "--load_tensors",
