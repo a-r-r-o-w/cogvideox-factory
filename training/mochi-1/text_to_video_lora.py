@@ -13,16 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 import gc
-import json
+import random
+from glob import glob
 import logging
 import math
 import os
 import shutil
+import torch.nn.functional as F
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Tuple, List
 
 import diffusers
 import torch
@@ -44,11 +45,7 @@ from diffusers import (
 )
 from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from diffusers.optimization import get_scheduler
-from diffusers.training_utils import (
-    cast_training_params,
-    compute_density_for_timestep_sampling,
-    compute_loss_weighting_for_sd3,
-)
+from diffusers.training_utils import cast_training_params
 from diffusers.utils import convert_unet_state_dict_to_peft, export_to_video
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.torch_utils import is_compiled_module
@@ -56,20 +53,17 @@ from huggingface_hub import create_repo, upload_folder
 from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dict
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer, T5EncoderModel
 
 
 from args import get_args  # isort:skip
-from dataset_mochi import VideoDatasetWithFlexibleResize  # isort:skip
+from dataset_simple import LatentEmbedDataset
 
 import sys
 
 
 sys.path.append("..")
 
-from dataset import BucketSampler # isort:skip
-from text_encoder import compute_prompt_embeddings  # isort:skip
-from utils import get_gradient_norm, get_optimizer, print_memory, reset_memory  # isort:skip
+from utils import get_optimizer, print_memory, reset_memory  # isort:skip
 
 
 logger = get_logger(__name__)
@@ -81,7 +75,7 @@ def save_model_card(
     base_model: str = None,
     validation_prompt=None,
     repo_folder=None,
-    fps=8,
+    fps=30,
 ):
     widget_dict = []
     if videos is not None and len(videos) > 0:
@@ -196,29 +190,44 @@ def log_validation(
     return videos
 
 
+# Adapted from the original code:
+# https://github.com/genmoai/mochi/blob/aba74c1b5e0755b1fa3343d9e4bd22e89de77ab1/src/genmo/mochi_preview/pipelines.py#L578
+def cast_dit(model, dtype):
+    for name, module in model.named_modules():
+        if isinstance(module, torch.nn.Linear):
+            assert any(
+                n in name for n in ["time_embed", "proj_out", "blocks", "norm_out"]
+            ), f"Unexpected linear layer: {name}"
+            module.to(dtype=dtype)
+        elif isinstance(module, torch.nn.Conv2d):
+            module.to(dtype=dtype)
+    return model
+
+
 class CollateFunction:
-    def __init__(self, weight_dtype: torch.dtype, load_tensors: bool) -> None:
-        self.weight_dtype = weight_dtype
-        self.load_tensors = load_tensors
+    def __init__(self, caption_dropout: float = None) -> None:
+        self.caption_dropout = caption_dropout
 
-    def __call__(self, data: Dict[str, Any]) -> Dict[str, torch.Tensor]:
-        prompts = [x["prompt"] for x in data[0]]
-        prompt_attention_mask = None
+    def __call__(self, samples: List[Tuple[dict, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        ldists = torch.cat([data[0]["ldist"] for data in samples], dim=0)
+        z = DiagonalGaussianDistribution(ldists).sample()
+        assert torch.isfinite(z).all()
 
-        if self.load_tensors:
-            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
-            prompt_attention_mask = torch.stack([x["prompt_attention_mask"] for x in data[0]])
+        # Sample noise which we will add to the samples.
+        eps = torch.randn_like(z)
+        sigma = torch.rand(z.shape[:1], device="cpu", dtype=torch.float32)
 
-        videos = [x["video"] for x in data[0]]
-        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
+        prompt_embeds = torch.cat([data[1]["prompt_embeds"] for data in samples], dim=0)
+        prompt_attention_mask = torch.cat([data[1]["prompt_attention_mask"] for data in samples], dim=0)
+        if self.caption_dropout and random.random() < self.caption_dropout:
+            prompt_embeds.zero_()
+            prompt_attention_mask = prompt_attention_mask.long()
+            prompt_attention_mask.zero_()
+            prompt_attention_mask = prompt_attention_mask.bool()
 
-        out_dict = {
-            "videos": videos,
-            "prompts": prompts,
-        }
-        if prompt_attention_mask is not None:
-            out_dict.update({"prompt_attention_mask": prompt_attention_mask})
-        return out_dict
+        return dict(
+            z=z, eps=eps, sigma=sigma, prompt_embeds=prompt_embeds, prompt_attention_mask=prompt_attention_mask
+        )
 
 
 def main(args):
@@ -281,73 +290,41 @@ def main(args):
             ).repo_id
 
     # Prepare models and scheduler
-    if not args.load_tensors:
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="tokenizer",
-            revision=args.revision,
-        )
-        text_encoder = T5EncoderModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="text_encoder",
-            revision=args.revision,
-        )
-
-        vae = AutoencoderKLMochi.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="vae",
-            revision=args.revision,
-            variant=args.variant,
-        )
-        if args.enable_slicing:
-            vae.enable_slicing()
-        if args.enable_tiling:
-            vae.enable_tiling()
-
-        # keep things in FP32.
-        text_encoder.requires_grad_(False)
-        text_encoder.to(accelerator.device, dtype=torch.float32)
-        vae.requires_grad_(False)
-        vae.to(accelerator.device, dtype=torch.float32)
-
-    load_dtype = torch.bfloat16 if "5b" in args.pretrained_model_name_or_path.lower() else torch.float16
     transformer = MochiTransformer3DModel.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="transformer",
-        torch_dtype=load_dtype,
         revision=args.revision,
         variant=args.variant,
     )
-    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    noise_scheduler_copy = copy.deepcopy(scheduler)
+    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="scheduler"
+    )
 
     vae_config = AutoencoderKLMochi.load_config(args.pretrained_model_name_or_path, subfolder="vae")
-    vae_in_channels = vae_config["latent_channels"]
     has_latents_mean = "latents_mean" in vae_config and vae_config["latents_mean"] is not None
     has_latents_std = "latents_std" in vae_config and vae_config["latents_std"] is not None
+    if has_latents_mean and has_latents_std:
+        mean = torch.tensor(vae_config["latents_mean"])[:, None, None, None]
+        std = torch.tensor(vae_config["latents_mean"])[:, None, None, None]
 
-    VAE_SCALING_FACTOR = vae_config["scaling_factor"]
-
-    # For mixed precision training we cast all non-trainable weights (vae, text_encoder and transformer) to half-precision
-    # as these weights are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
-    if accelerator.state.deepspeed_plugin:
-        # DeepSpeed is handling precision, use what's in the DeepSpeed config
-        if (
-            "fp16" in accelerator.state.deepspeed_plugin.deepspeed_config
-            and accelerator.state.deepspeed_plugin.deepspeed_config["fp16"]["enabled"]
-        ):
-            weight_dtype = torch.float16
-        if (
-            "bf16" in accelerator.state.deepspeed_plugin.deepspeed_config
-            and accelerator.state.deepspeed_plugin.deepspeed_config["bf16"]["enabled"]
-        ):
-            weight_dtype = torch.bfloat16
-    else:
-        if accelerator.mixed_precision == "fp16":
-            weight_dtype = torch.float16
-        elif accelerator.mixed_precision == "bf16":
-            weight_dtype = torch.bfloat16
+    # if accelerator.state.deepspeed_plugin:
+    #     # DeepSpeed is handling precision, use what's in the DeepSpeed config
+    #     if (
+    #         "fp16" in accelerator.state.deepspeed_plugin.deepspeed_config
+    #         and accelerator.state.deepspeed_plugin.deepspeed_config["fp16"]["enabled"]
+    #     ):
+    #         weight_dtype = torch.float16
+    #     if (
+    #         "bf16" in accelerator.state.deepspeed_plugin.deepspeed_config
+    #         and accelerator.state.deepspeed_plugin.deepspeed_config["bf16"]["enabled"]
+    #     ):
+    #         weight_dtype = torch.bfloat16
+    # else:
+    if accelerator.mixed_precision == "fp16":
+        weight_dtype = torch.float16
+    elif accelerator.mixed_precision == "bf16":
+        weight_dtype = torch.bfloat16
 
     if torch.backends.mps.is_available() and weight_dtype == torch.bfloat16:
         # due to pytorch#99272, MPS does not yet support bfloat16.
@@ -355,11 +332,12 @@ def main(args):
             "Mixed precision training with bfloat16 is not supported on MPS. Please use fp16 (recommended) or fp32 instead."
         )
 
-    # keep the transformer in FP32.
     transformer.requires_grad_(False)
-    transformer.to(accelerator.device, torch.float32)
+    transformer.to(accelerator.device)
     if args.gradient_checkpointing:
         transformer.enable_gradient_checkpointing()
+    if args.cast_dit:
+        transformer = cast_dit(transformer, weight_dtype)
 
     # now we will add new LoRA weights to the attention layers
     transformer_lora_config = LoraConfig(
@@ -492,43 +470,19 @@ def main(args):
     accelerator.print(f"Using {optimizer.__class__.__name__} optimizer.")
 
     # Dataset and DataLoader
-    if args.load_tensors and args.id_token:
-        with open(os.path.join(args.data_root, "data.jsonl")) as f:
-            contents = [json.loads(jline) for jline in f.read().splitlines()]
-            parsed_id_token = None
-            for content in contents:
-                if "id_token" in content:
-                    parsed_id_token = content["id_token"]
-            if parsed_id_token is not None and parsed_id_token.strip() != args.id_token.strip():
-                raise ValueError(
-                    f"Parsed `id_token` from serialized metadata is {parsed_id_token} and provided `id_token` is {args.id_token}. They should match."
-                )
+    train_vids = list(sorted(glob(f"{args.data_root}/*.mp4")))
+    train_vids = [v for v in train_vids if not v.endswith(".recon.mp4")]
+    accelerator.print(f"Found {len(train_vids)} training videos in {args.data_root}")
+    assert len(train_vids) > 0, f"No training data found in {args.data_root}"
 
-    dataset_init_kwargs = {
-        "data_root": args.data_root,
-        "video_reshape_mode": args.video_reshape_mode,
-        "dataset_file": args.dataset_file,
-        "caption_column": args.caption_column,
-        "video_column": args.video_column,
-        "max_num_frames": args.max_num_frames,
-        "id_token": args.id_token,
-        "height_buckets": args.height_buckets,
-        "width_buckets": args.width_buckets,
-        "frame_buckets": args.frame_buckets,
-        "load_tensors": args.load_tensors,
-        "random_flip": args.random_flip,
-    }
-    train_dataset = VideoDatasetWithFlexibleResize(**dataset_init_kwargs)
-    # keeping things in FP32 for now.
-    collate_fn = CollateFunction(weight_dtype=torch.float32, load_tensors=args.load_tensors)
+    collate_fn = CollateFunction(caption_dropout=args.caption_dropout)
+    train_dataset = LatentEmbedDataset(train_vids, repeat=1)
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=1,
-        sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
         collate_fn=collate_fn,
+        batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
         pin_memory=args.pin_memory,
-        prefetch_factor=4,
     )
 
     # Scheduler and math around the number of training steps.
@@ -636,27 +590,6 @@ def main(args):
         disable=not accelerator.is_local_main_process,
     )
 
-    # For DeepSpeed training
-    model_config = transformer.module.config if hasattr(transformer, "module") else transformer.config
-
-    if args.load_tensors:
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    def get_sigmas(timesteps, n_dim=4, dtype=torch.float32):
-        sigmas = noise_scheduler_copy.sigmas.to(device=accelerator.device, dtype=dtype)
-        schedule_timesteps = noise_scheduler_copy.timesteps.to(accelerator.device)
-        timesteps = timesteps.to(accelerator.device)
-        step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
-
-        sigma = sigmas[step_indices].flatten()
-        if "invert_sigmas" in noise_scheduler_copy.config and noise_scheduler_copy.config.invert_sigmas:
-            # https://github.com/huggingface/diffusers/blob/99c0483b67427de467f11aa35d54678fd36a7ea2/src/diffusers/schedulers/scheduling_flow_match_euler_discrete.py#L209
-            sigma = 1.0 - sigma
-        while len(sigma.shape) < n_dim:
-            sigma = sigma.unsqueeze(-1)
-        return sigma
-
     for epoch in range(first_epoch, args.num_train_epochs):
         transformer.train()
 
@@ -664,108 +597,45 @@ def main(args):
             models_to_accumulate = [transformer]
 
             with accelerator.accumulate(models_to_accumulate):
-                videos = batch["videos"].to(accelerator.device, non_blocking=True)
-                prompts = batch["prompts"]
-                if args.load_tensors:
-                    prompt_attention_mask = batch["prompt_attention_mask"]
+                z = batch["z"]
+                # revisit
+                # if has_latents_mean and has_latents_std:
+                #     z = (z - mean.to(z)) / std.to(z)
 
-                # Encode videos
-                if not args.load_tensors:
-                    videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
-                    latent_dist = vae.encode(videos.to(vae.dtype)).latent_dist
-                else:
-                    latent_dist = DiagonalGaussianDistribution(videos)
+                eps = batch["eps"]
+                sigma = batch["sigma"]
+                prompt_embeds = batch["prompt_embeds"]
+                prompt_attention_mask = batch["prompt_attention_mask"]
 
-                videos = latent_dist.sample()
-                if has_latents_mean and has_latents_std:
-                    latents_mean = (
-                        torch.tensor(vae_config["latents_mean"]).view(1, vae_in_channels, 1, 1, 1).to(videos.device, videos.dtype)
-                    )
-                    latents_std = (
-                        torch.tensor(vae_config["latents_std"]).view(1, vae_in_channels, 1, 1, 1).to(videos.device, videos.dtype)
-                    )
-                    videos = (videos - latents_mean) * VAE_SCALING_FACTOR / latents_std
-                else:
-                    videos = videos * VAE_SCALING_FACTOR
-
-                # keep in FP32 for now.
-                videos = videos.to(memory_format=torch.contiguous_format, dtype=torch.float32)
-                model_input = videos
-
-                # Encode prompts
-                if not args.load_tensors:
-                    prompt_embeds, prompt_attention_mask = compute_prompt_embeddings(
-                        tokenizer,
-                        text_encoder,
-                        prompts,
-                        model_config.max_text_seq_length,
-                        accelerator.device,
-                        weight_dtype=weight_dtype,
-                        requires_grad=False,
-                    )
-                else:
-                    prompt_embeds = prompts.to(weight_dtype)
-                    prompt_attention_mask = prompt_attention_mask.to(accelerator.device)
-
-                # Sample noise that will be added to the latents
-                noise = torch.randn_like(model_input)
-                batch_size, num_channels, num_frames, height, width = model_input.shape
-
-                # Sample a random timestep for each image
-                # for weighting schemes where we sample timesteps non-uniformly
-                u = compute_density_for_timestep_sampling(
-                    weighting_scheme=args.weighting_scheme,
-                    batch_size=batch_size,
-                    logit_mean=args.logit_mean,
-                    logit_std=args.logit_std,
-                    mode_scale=args.mode_scale,
-                )
-                # indices = (u * noise_scheduler_copy.config.num_train_timesteps).long()
-                # timesteps = noise_scheduler_copy.timesteps[indices].to(device=model_input.device)
-                # revisit.
-                timesteps = (u * noise_scheduler_copy.config.num_train_timesteps)
-
+                sigma_bcthw = sigma[:, None, None, None, None]  # [B, 1, 1, 1, 1]
                 # Add noise according to flow matching.
                 # zt = (1 - texp) * x + texp * z1
-                sigmas = get_sigmas(
-                    timesteps=noise_scheduler_copy.timesteps[timesteps.long()].to(device=model_input.device),
-                    n_dim=model_input.ndim,
-                    dtype=model_input.dtype
-                )
-                noisy_model_input = (1.0 - sigmas) * model_input + sigmas * noise # do we need to revisit this?
-                noisy_model_input = noisy_model_input.to(weight_dtype)
+                z_sigma = (1 - sigma_bcthw) * z + sigma_bcthw * eps
+                ut = z - eps
 
                 # Predict the noise residual
-                actual_num_train_timesteps = float(noise_scheduler_copy.config.num_train_timesteps)
-                timesteps = (1 - (timesteps / actual_num_train_timesteps)) * actual_num_train_timesteps # revisit
-                timesteps = timesteps.to(device=model_input.device)
-                model_pred = transformer(
-                    hidden_states=noisy_model_input,
-                    encoder_hidden_states=prompt_embeds,
-                    encoder_attention_mask=prompt_attention_mask,
-                    timestep=timesteps,
-                    return_dict=False,
-                )[0]
-
-                # these weighting schemes use a uniform timestep sampling
-                # and instead post-weight the loss
-                weighting = compute_loss_weighting_for_sd3(weighting_scheme=args.weighting_scheme, sigmas=sigmas)
-
-                # flow matching loss
-                # target = noise - model_input
-                target = model_input - noise # as discussed with Ajay
-
-                loss = torch.mean(
-                    (weighting * (model_pred.float() - target.float()) ** 2).reshape(batch_size, -1),
-                    dim=1,
-                )
-                loss = loss.mean()
+                # (1 - sigma) because of
+                # https://github.com/genmoai/mochi/blob/aba74c1b5e0755b1fa3343d9e4bd22e89de77ab1/src/genmo/mochi_preview/dit/joint_model/asymm_models_joint.py#L656
+                # Also, we operate on the scaled version of the `timesteps` directly in the `diffusers` implementation.
+                timesteps = (1 - sigma) * scheduler.config.num_train_timesteps
+                with torch.autocast(accelerator.device.type, weight_dtype):
+                    model_pred = transformer(
+                        hidden_states=z_sigma,
+                        encoder_hidden_states=prompt_embeds,
+                        encoder_attention_mask=prompt_attention_mask,
+                        timestep=timesteps,
+                        return_dict=False,
+                    )[0]
+                assert model_pred.shape == z.shape
+                loss = F.mse_loss(model_pred.float(), ut.float())
                 accelerator.backward(loss)
 
-                if accelerator.sync_gradients:
-                    gradient_norm_before_clip = get_gradient_norm(transformer_lora_parameters)
-                    accelerator.clip_grad_norm_(transformer_lora_parameters, args.max_grad_norm)
-                    gradient_norm_after_clip = get_gradient_norm(transformer_lora_parameters)
+                # if accelerator.sync_gradients:
+                # no grad norm for now, following the original code
+                # https://github.com/genmoai/mochi/blob/aba74c1b5e0755b1fa3343d9e4bd22e89de77ab1/demos/fine_tuner/train.py#L380
+                # gradient_norm_before_clip = get_gradient_norm(transformer_lora_parameters)
+                # accelerator.clip_grad_norm_(transformer_lora_parameters, args.max_grad_norm)
+                # gradient_norm_after_clip = get_gradient_norm(transformer_lora_parameters)
 
                 if accelerator.state.deepspeed_plugin is None:
                     optimizer.step()
@@ -807,14 +677,14 @@ def main(args):
 
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
             logs = {"loss": loss.detach().item(), "lr": last_lr}
-            # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
-            if accelerator.distributed_type != DistributedType.DEEPSPEED:
-                logs.update(
-                    {
-                        "gradient_norm_before_clip": gradient_norm_before_clip,
-                        "gradient_norm_after_clip": gradient_norm_after_clip,
-                    }
-                )
+            # # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
+            # if accelerator.distributed_type != DistributedType.DEEPSPEED:
+            #     logs.update(
+            #         {
+            #             "gradient_norm_before_clip": gradient_norm_before_clip,
+            #             "gradient_norm_after_clip": gradient_norm_after_clip,
+            #         }
+            #     )
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
@@ -822,13 +692,14 @@ def main(args):
                 break
 
         if global_step >= args.max_train_steps:
-                break
+            break
 
         if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
             if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
                 accelerator.print("===== Memory before validation =====")
                 print_memory(accelerator.device)
 
+                transformer.eval()
                 pipe = MochiPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     transformer=unwrap_model(transformer),
@@ -848,12 +719,12 @@ def main(args):
                 for validation_prompt in validation_prompts:
                     pipeline_args = {
                         "prompt": validation_prompt,
-                        "guidance_scale": 4.5,
+                        "guidance_scale": 6.0,
+                        "num_inference_steps": 64,
                         "height": args.height,
                         "width": args.width,
                         "max_sequence_length": 256,
                     }
-
                     log_validation(
                         pipe=pipe,
                         args=args,
@@ -866,12 +737,13 @@ def main(args):
                 print_memory(accelerator.device)
                 reset_memory(accelerator.device)
 
-
                 del pipe.text_encoder
                 del pipe.vae
                 del pipe
                 gc.collect()
                 torch.cuda.empty_cache()
+
+                transformer.train()
 
     accelerator.wait_for_everyone()
 
@@ -884,10 +756,7 @@ def main(args):
         )
 
         # Cleanup trained models to save memory
-        if args.load_tensors:
-            del transformer
-        else:
-            del transformer, text_encoder, vae
+        del transformer
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -922,9 +791,11 @@ def main(args):
             for validation_prompt in validation_prompts:
                 pipeline_args = {
                     "prompt": validation_prompt,
-                    "guidance_scale": 4.5,
+                    "guidance_scale": 6.0,
+                    "num_inference_steps": 64,
                     "height": args.height,
                     "width": args.width,
+                    "max_sequence_length": 256,
                 }
 
                 video = log_validation(
