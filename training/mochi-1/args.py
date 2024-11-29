@@ -42,7 +42,7 @@ def _get_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--compile_dit",
         action="store_true",
-        help="If we should cast DiT params to a lower precision.",
+        help="If we should compile the DiT.",
     )
 
 
