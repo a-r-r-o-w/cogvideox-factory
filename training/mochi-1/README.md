@@ -6,8 +6,8 @@
 <th align=center> Test Sample </th>
 </tr>
 <tr>
-  <td align=center><video src="https://huggingface.co/datasets/sayakpaul/video-dataset-disney-organized/resolve/main/0288f3d69c08e816d81b014da620db49.mp4"> Your browser does not support the video tag. </video></td>
-  <td align=center><video src="https://huggingface.co/datasets/sayakpaul/sample-datasets/resolve/main/validation_1518_39a90151c5ea24c719e1.mp4"> Your browser does not support the video tag. </video></td>
+  <td align=center><video src="https://github.com/user-attachments/assets/6f906a32-b169-493f-a713-07679e87cd91"> Your browser does not support the video tag. </video></td>
+  <td align=center><video src="https://github.com/user-attachments/assets/d356e70f-ccf4-47f7-be1d-8d21108d8a84"> Your browser does not support the video tag. </video></td>
 </tr>
 </table>
 
