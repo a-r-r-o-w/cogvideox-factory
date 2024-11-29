@@ -1,0 +1,7 @@
+peft
+transformers
+wandb
+torch
+torchvision
+moviepy
+click
