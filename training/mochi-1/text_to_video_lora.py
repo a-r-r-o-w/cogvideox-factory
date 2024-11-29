@@ -102,7 +102,27 @@ The model was trained using [CogVideoX Factory](https://github.com/a-r-r-o-w/cog
 Requires the [🧨 Diffusers library](https://github.com/huggingface/diffusers) installed.
 
 ```py
-TODO
+from diffusers import MochiPipeline
+from diffusers.utils import export_to_video
+import torch 
+
+pipe = MochiPipeline.from_pretrained("genmo/mochi-1-preview")
+pipe.load_lora_weights("CHANGE_ME")
+pipe.enable_model_cpu_offload()
+
+pipeline_args = {
+    "prompt": "CHANGE_ME",
+    "guidance_scale": 6.0,
+    "num_inference_steps": 64,
+    "height": 480,
+    "width": 848,
+    "max_sequence_length": 256,
+    "output_type": "np",
+}
+
+with torch.autocast("cuda", torch.bfloat16)
+    video = pipe(**pipeline_args).frames[0]
+export_to_video(video)
 ```
 
 For more details, including weighting, merging and fusing LoRAs, check the [documentation](https://huggingface.co/docs/diffusers/main/en/using-diffusers/loading_adapters) on loading LoRAs in diffusers.
