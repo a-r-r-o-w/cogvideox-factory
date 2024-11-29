@@ -110,18 +110,16 @@ pipe = MochiPipeline.from_pretrained("genmo/mochi-1-preview")
 pipe.load_lora_weights("CHANGE_ME")
 pipe.enable_model_cpu_offload()
 
-pipeline_args = {
-    "prompt": "CHANGE_ME",
-    "guidance_scale": 6.0,
-    "num_inference_steps": 64,
-    "height": 480,
-    "width": 848,
-    "max_sequence_length": 256,
-    "output_type": "np",
-}
-
-with torch.autocast("cuda", torch.bfloat16)
-    video = pipe(**pipeline_args).frames[0]
+with torch.autocast("cuda", torch.bfloat16):
+    video = pipe(
+        prompt="CHANGE_ME",
+        guidance_scale=6.0,
+        num_inference_steps=64,
+        height=480,
+        width=848,
+        max_sequence_length=256,
+        output_type="np"
+    ).frames[0]
 export_to_video(video)
 ```
 
