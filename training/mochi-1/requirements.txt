@@ -1,0 +1,8 @@
+peft
+transformers
+wandb
+torch
+torchvision
+av==11.0.0
+moviepy==1.0.3
+click
