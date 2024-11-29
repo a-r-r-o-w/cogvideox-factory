@@ -782,6 +782,8 @@ def main(args):
                 # Prepare rotary embeds
                 image_rotary_emb = (
                     prepare_rotary_positional_embeddings(
+                        base_height=args.base_height,
+                        base_width=args.base_width,
                         height=height * VAE_SCALE_FACTOR_SPATIAL,
                         width=width * VAE_SCALE_FACTOR_SPATIAL,
                         num_frames=num_frames,
