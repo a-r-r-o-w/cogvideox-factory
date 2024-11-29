@@ -8,7 +8,7 @@ DATA_ROOT="videos_prepared"
 MODEL="genmo/mochi-1-preview"
 OUTPUT_PATH="mochi-lora"
 
-cmd="CUDA_VISIBLE_DEVICES=$GPU_IDS python text_to_video_lora_simple.py \
+cmd="CUDA_VISIBLE_DEVICES=$GPU_IDS python text_to_video_lora.py \
   --pretrained_model_name_or_path $MODEL \
   --cast_dit \
   --data_root $DATA_ROOT \
