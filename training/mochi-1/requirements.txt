@@ -3,5 +3,5 @@ transformers
 wandb
 torch
 torchvision
-moviepy
+moviepy==1.0.3
 click
