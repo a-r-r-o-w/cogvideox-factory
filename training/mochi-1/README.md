@@ -89,6 +89,7 @@ Our script currently doesn't leverage `accelerate` and some of its consequences 
 * No support for distributed training. 
 * No intermediate checkpoint saving and loading support.
 * `train_batch_size > 1` are supported but can potentially lead to OOMs because we currently don't have gradient accumulation support.
+* No support for 8bit optimizers (but should be relatively easy to add).
 
 **Misc**: 
 
