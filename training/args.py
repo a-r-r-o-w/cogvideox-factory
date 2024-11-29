@@ -81,6 +81,18 @@ def _get_dataset_args(parser: argparse.ArgumentParser) -> None:
         help="CogVideoX1.5 need to guarantee that ((num_frames - 1) // self.vae_scale_factor_temporal + 1) % patch_size_t == 0, such as 53"
     )
     parser.add_argument(
+        "--base_height",
+        type=int,
+        default=480,
+        help="Base height for rotary positional embeddings",
+    )
+    parser.add_argument(
+        "--base_width",
+        type=int,
+        default=720,
+        help="Base width for rotary positional embeddings",
+    )
+    parser.add_argument(
         "--load_tensors",
         action="store_true",
         help="Whether to use a pre-encoded tensor dataset of latents and prompt embeddings instead of videos and text prompts. The expected format is that saved by running the `prepare_dataset.py` script.",
