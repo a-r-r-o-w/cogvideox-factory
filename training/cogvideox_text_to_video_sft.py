@@ -698,7 +698,7 @@ def main(args):
                 loss = loss.mean()
                 accelerator.backward(loss)
 
-                if accelerator.sync_gradients:
+                if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
                     gradient_norm_before_clip = get_gradient_norm(transformer.parameters())
                     accelerator.clip_grad_norm_(transformer.parameters(), args.max_grad_norm)
                     gradient_norm_after_clip = get_gradient_norm(transformer.parameters())

@@ -641,7 +641,7 @@ def main(args):
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
-    if accelerator.is_main_process:
+    if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
         tracker_name = args.tracker_name or "cogvideox-lora"
         accelerator.init_trackers(tracker_name, config=vars(args))
 
@@ -824,7 +824,7 @@ def main(args):
                 loss = loss.mean()
                 accelerator.backward(loss)
 
-                if accelerator.sync_gradients:
+                if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
                     gradient_norm_before_clip = get_gradient_norm(transformer.parameters())
                     accelerator.clip_grad_norm_(transformer.parameters(), args.max_grad_norm)
                     gradient_norm_after_clip = get_gradient_norm(transformer.parameters())
@@ -878,7 +878,7 @@ def main(args):
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
             logs = {"loss": loss.detach().item(), "lr": last_lr}
             # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
-            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+            if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
                 logs.update(
                     {
                         "gradient_norm_before_clip": gradient_norm_before_clip,
