@@ -717,6 +717,7 @@ def main(args):
 
         for step, batch in enumerate(train_dataloader):
             models_to_accumulate = [transformer]
+            logs = {}
 
             with accelerator.accumulate(models_to_accumulate):
                 images = batch["images"].to(accelerator.device, non_blocking=True)
@@ -832,6 +833,10 @@ def main(args):
                     gradient_norm_before_clip = get_gradient_norm(transformer.parameters())
                     accelerator.clip_grad_norm_(transformer.parameters(), args.max_grad_norm)
                     gradient_norm_after_clip = get_gradient_norm(transformer.parameters())
+                    logs.update({
+                        "gradient_norm_before_clip": gradient_norm_before_clip,
+                        "gradient_norm_after_clip": gradient_norm_after_clip,
+                    })
 
                 if accelerator.state.deepspeed_plugin is None:
                     optimizer.step()
@@ -880,15 +885,10 @@ def main(args):
                     run_validation(args, accelerator, transformer, scheduler, model_config, weight_dtype)
 
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
-            logs = {"loss": loss.detach().item(), "lr": last_lr}
-            # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
-            if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
-                logs.update(
-                    {
-                        "gradient_norm_before_clip": gradient_norm_before_clip,
-                        "gradient_norm_after_clip": gradient_norm_after_clip,
-                    }
-                )
+            logs.update({
+                "loss": loss.detach().item(),
+                "lr": last_lr,
+            })
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
