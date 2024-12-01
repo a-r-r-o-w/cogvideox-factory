@@ -197,6 +197,16 @@ def _get_training_args(parser: argparse.ArgumentParser) -> None:
         default=200,
         help="Number of steps for the warmup in the lr scheduler.",
     )
+    parser.add_argument(
+        "--checkpointing_steps",
+        type=int,
+        default=None,
+    )
+    parser.add_argument(
+        "--resume_from_checkpoint",
+        type=str,
+        default=None,
+    )
 
 
 def _get_optimizer_args(parser: argparse.ArgumentParser) -> None:
@@ -242,12 +252,7 @@ def _get_configuration_args(parser: argparse.ArgumentParser) -> None:
             " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
         ),
     )
-    parser.add_argument(
-        "--report_to",
-        type=str,
-        default=None,
-        help="If logging to wandb."
-    )
+    parser.add_argument("--report_to", type=str, default=None, help="If logging to wandb.")
 
 
 def get_args():
