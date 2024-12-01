@@ -15,6 +15,10 @@ Now you can make Mochi-1 your own with `diffusers`, too 🤗 🧨
 
 We provide a minimal and faithful reimplementation of the [Mochi-1 original fine-tuner](https://github.com/genmoai/mochi/tree/aba74c1b5e0755b1fa3343d9e4bd22e89de77ab1/demos/fine_tuner). As usual, we leverage `peft` for things LoRA in our implementation. 
 
+**Updates**
+
+December 1 2024: Support for checkpoint saving and loading.
+
 ## Getting started
 
 Install the dependencies: `pip install -r requirements.txt`. Also make sure your `diffusers` installation is from the current `main`. 
@@ -98,7 +102,6 @@ export_to_video(video)
 Our script currently doesn't leverage `accelerate` and some of its consequences are detailed below:
 
 * No support for distributed training. 
-* No intermediate checkpoint saving and loading support.
 * `train_batch_size > 1` are supported but can potentially lead to OOMs because we currently don't have gradient accumulation support.
 * No support for 8bit optimizers (but should be relatively easy to add).
 
