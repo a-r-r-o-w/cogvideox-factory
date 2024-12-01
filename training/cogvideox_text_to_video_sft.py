@@ -317,6 +317,8 @@ def main(args):
 
     VAE_SCALING_FACTOR = vae.config.scaling_factor
     VAE_SCALE_FACTOR_SPATIAL = 2 ** (len(vae.config.block_out_channels) - 1)
+    RoPE_BASE_HEIGHT = transformer.config.sample_height * VAE_SCALE_FACTOR_SPATIAL
+    RoPE_BASE_WIDTH = transformer.config.sample_width * VAE_SCALE_FACTOR_SPATIAL
 
     # For mixed precision training we cast all non-trainable weights (vae, text_encoder and transformer) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
@@ -665,6 +667,8 @@ def main(args):
                         patch_size_t=model_config.patch_size_t if hasattr(model_config, "patch_size_t") else None,
                         attention_head_dim=model_config.attention_head_dim,
                         device=accelerator.device,
+                        base_height=RoPE_BASE_HEIGHT,
+                        base_width=RoPE_BASE_WIDTH,
                     )
                     if model_config.use_rotary_positional_embeddings
                     else None
