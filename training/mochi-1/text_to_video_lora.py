@@ -31,7 +31,7 @@ from diffusers.training_utils import cast_training_params
 from diffusers.utils import export_to_video
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from huggingface_hub import create_repo, upload_folder
-from peft import LoraConfig, get_peft_model_state_dict
+from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dict
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
@@ -215,6 +215,19 @@ def cast_dit(model, dtype):
     return model
 
 
+def save_checkpoint(model, optimizer, lr_scheduler, global_step, checkpoint_path):
+    lora_state_dict = get_peft_model_state_dict(model)
+    torch.save(
+        {
+            "state_dict": lora_state_dict,
+            "optimizer": optimizer.state_dict(),
+            "lr_scheduler": lr_scheduler.state_dict(),
+            "global_step": global_step,
+        },
+        checkpoint_path,
+    )
+
+
 class CollateFunction:
     def __init__(self, caption_dropout: float = None) -> None:
         self.caption_dropout = caption_dropout
@@ -244,7 +257,7 @@ class CollateFunction:
 def main(args):
     if not torch.cuda.is_available():
         raise ValueError("Not supported without CUDA.")
-    
+
     if args.report_to == "wandb" and args.hub_token is not None:
         raise ValueError(
             "You cannot use both --report_to=wandb and --hub_token due to a security risk of exposing your token."
@@ -346,6 +359,23 @@ def main(args):
         tracker_name = args.tracker_name or "mochi-1-lora"
         wandb_run = wandb.init(project=tracker_name, config=vars(args))
 
+    # Resume from checkpoint if specified
+    if args.resume_from_checkpoint:
+        checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu", weights_only=True)
+        if "global_step" in checkpoint:
+            global_step = checkpoint["global_step"]
+        if "optimizer" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer"])
+        if "lr_scheduler" in checkpoint:
+            lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+
+        set_peft_model_state_dict(transformer, checkpoint["state_dict"])
+
+        print(f"Resuming from checkpoint: {args.resume_from_checkpoint}")
+        print(f"Resuming from global step: {global_step}")
+    else:
+        global_step = 0
+
     print("===== Memory before training =====")
     reset_memory("cuda")
     print_memory("cuda")
@@ -361,7 +391,6 @@ def main(args):
     print(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     print(f"  Total optimization steps = {args.max_train_steps}")
 
-    global_step = 0
     first_epoch = 0
     progress_bar = tqdm(
         range(0, args.max_train_steps),
@@ -414,6 +443,17 @@ def main(args):
             progress_bar.set_postfix(**logs)
             if wandb_run:
                 wandb_run.log(logs, step=global_step)
+
+            if args.checkpointing_steps is not None and global_step % args.checkpointing_steps == 0:
+                print(f"Saving checkpoint at step {global_step}")
+                checkpoint_path = os.path.join(args.output_dir, f"checkpoint-{global_step}.pt")
+                save_checkpoint(
+                    transformer,
+                    optimizer,
+                    lr_scheduler,
+                    global_step,
+                    checkpoint_path,
+                )
 
             if global_step >= args.max_train_steps:
                 break
@@ -546,7 +586,7 @@ def main(args):
             repo_id=repo_id,
             folder_path=args.output_dir,
             commit_message="End of training",
-            ignore_patterns=["step_*", "epoch_*", "*.bin", "*.pt"],
+            ignore_patterns=["*.bin"],
         )
         print(f"Params pushed to {repo_id}.")
 
