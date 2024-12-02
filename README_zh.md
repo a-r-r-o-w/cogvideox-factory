@@ -1,6 +1,6 @@
 # CogVideoX Factory 🧪
 
-[Read in English](./README.md)
+[Read in English](./README.md) | [中文閱讀](./README_zh_TW.md)
 
 在 24GB GPU 内存下对 Cog 系列视频模型进行微调以实现自定义视频生成，支持多分辨率 ⚡️📼
 
