@@ -707,10 +707,12 @@ def main(args):
                     gradient_norm_before_clip = get_gradient_norm(transformer.parameters())
                     accelerator.clip_grad_norm_(transformer.parameters(), args.max_grad_norm)
                     gradient_norm_after_clip = get_gradient_norm(transformer.parameters())
-                    logs.update({
-                        "gradient_norm_before_clip": gradient_norm_before_clip,
-                        "gradient_norm_after_clip": gradient_norm_after_clip,
-                    })
+                    logs.update(
+                        {
+                            "gradient_norm_before_clip": gradient_norm_before_clip,
+                            "gradient_norm_after_clip": gradient_norm_after_clip,
+                        }
+                    )
 
                 if accelerator.state.deepspeed_plugin is None:
                     optimizer.step()
@@ -751,10 +753,12 @@ def main(args):
                         logger.info(f"Saved state to {save_path}")
 
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
-            logs.update({
-                "loss": loss.detach().item(),
-                "lr": last_lr,
-            })
+            logs.update(
+                {
+                    "loss": loss.detach().item(),
+                    "lr": last_lr,
+                }
+            )
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
