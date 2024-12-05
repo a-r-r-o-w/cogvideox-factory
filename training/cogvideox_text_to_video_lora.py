@@ -328,6 +328,8 @@ def main(args):
 
     VAE_SCALING_FACTOR = vae.config.scaling_factor
     VAE_SCALE_FACTOR_SPATIAL = 2 ** (len(vae.config.block_out_channels) - 1)
+    RoPE_BASE_HEIGHT = transformer.config.sample_height * VAE_SCALE_FACTOR_SPATIAL
+    RoPE_BASE_WIDTH = transformer.config.sample_width * VAE_SCALE_FACTOR_SPATIAL
 
     # For mixed precision training we cast all non-trainable weights (vae, text_encoder and transformer) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
@@ -644,6 +646,7 @@ def main(args):
 
         for step, batch in enumerate(train_dataloader):
             models_to_accumulate = [transformer]
+            logs = {}
 
             with accelerator.accumulate(models_to_accumulate):
                 videos = batch["videos"].to(accelerator.device, non_blocking=True)
@@ -699,6 +702,8 @@ def main(args):
                         patch_size_t=model_config.patch_size_t if hasattr(model_config, "patch_size_t") else None,
                         attention_head_dim=model_config.attention_head_dim,
                         device=accelerator.device,
+                        base_height=RoPE_BASE_HEIGHT,
+                        base_width=RoPE_BASE_WIDTH,
                     )
                     if model_config.use_rotary_positional_embeddings
                     else None
@@ -732,10 +737,16 @@ def main(args):
                 loss = loss.mean()
                 accelerator.backward(loss)
 
-                if accelerator.sync_gradients:
+                if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
                     gradient_norm_before_clip = get_gradient_norm(transformer.parameters())
                     accelerator.clip_grad_norm_(transformer.parameters(), args.max_grad_norm)
                     gradient_norm_after_clip = get_gradient_norm(transformer.parameters())
+                    logs.update(
+                        {
+                            "gradient_norm_before_clip": gradient_norm_before_clip,
+                            "gradient_norm_after_clip": gradient_norm_after_clip,
+                        }
+                    )
 
                 if accelerator.state.deepspeed_plugin is None:
                     optimizer.step()
@@ -776,15 +787,12 @@ def main(args):
                         logger.info(f"Saved state to {save_path}")
 
             last_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.learning_rate
-            logs = {"loss": loss.detach().item(), "lr": last_lr}
-            # gradnorm + deepspeed: https://github.com/microsoft/DeepSpeed/issues/4555
-            if accelerator.distributed_type != DistributedType.DEEPSPEED:
-                logs.update(
-                    {
-                        "gradient_norm_before_clip": gradient_norm_before_clip,
-                        "gradient_norm_after_clip": gradient_norm_after_clip,
-                    }
-                )
+            logs.update(
+                {
+                    "loss": loss.detach().item(),
+                    "lr": last_lr,
+                }
+            )
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 

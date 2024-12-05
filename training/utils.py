@@ -208,9 +208,12 @@ def prepare_rotary_positional_embeddings(
     grid_width = width // (vae_scale_factor_spatial * patch_size)
     base_size_width = base_width // (vae_scale_factor_spatial * patch_size)
     base_size_height = base_height // (vae_scale_factor_spatial * patch_size)
+
     if patch_size_t is None:
         # CogVideoX 1.0
-        grid_crops_coords = get_resize_crop_region_for_grid((grid_height, grid_width), base_size_width, base_size_height)
+        grid_crops_coords = get_resize_crop_region_for_grid(
+            (grid_height, grid_width), base_size_width, base_size_height
+        )
         freqs_cos, freqs_sin = get_3d_rotary_pos_embed(
             embed_dim=attention_head_dim,
             crops_coords=grid_crops_coords,
@@ -229,7 +232,6 @@ def prepare_rotary_positional_embeddings(
             grid_type="slice",
             max_size=(base_size_height, base_size_width),
         )
-
 
     freqs_cos = freqs_cos.to(device=device)
     freqs_sin = freqs_sin.to(device=device)

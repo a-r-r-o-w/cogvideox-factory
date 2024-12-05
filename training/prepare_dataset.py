@@ -287,11 +287,13 @@ to_pil_image = transforms.ToPILImage(mode="RGB")
 
 
 def save_image(image: torch.Tensor, path: pathlib.Path) -> None:
-    image = to_pil_image(image)
+    image = image.to(dtype=torch.float32).clamp(-1, 1)
+    image = to_pil_image(image.float())
     image.save(path)
 
 
 def save_video(video: torch.Tensor, path: pathlib.Path, fps: int = 8) -> None:
+    video = video.to(dtype=torch.float32).clamp(-1, 1)
     video = [to_pil_image(frame) for frame in video]
     export_to_video(video, path, fps=fps)
 
