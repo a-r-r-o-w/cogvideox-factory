@@ -10,6 +10,8 @@ Fine-tune Cog family of video models for custom video generation under 24GB of G
 </tr>
 </table>
 
+**Update 29 Nov 2024**: We have added an experimental memory-efficient trainer for Mochi-1. Check it out [here](https://github.com/a-r-r-o-w/cogvideox-factory/blob/main/training/mochi-1/)!
+
 ## Quickstart
 
 Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt` and install diffusers from source by `pip install git+https://github.com/huggingface/diffusers`.
