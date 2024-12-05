@@ -27,7 +27,7 @@ import diffusers
 import torch
 import transformers
 import wandb
-from accelerate import Accelerator, DistributedType
+from accelerate import Accelerator, DistributedType, init_empty_weights
 from accelerate.logging import get_logger
 from accelerate.utils import (
     DistributedDataParallelKwargs,
@@ -47,7 +47,6 @@ from diffusers.training_utils import cast_training_params
 from diffusers.utils import convert_unet_state_dict_to_peft, export_to_video, load_image
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from huggingface_hub import create_repo, upload_folder
-from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dict
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, T5EncoderModel
@@ -89,44 +88,13 @@ def save_model_card(
             )
 
     model_description = f"""
-# CogVideoX LoRA Finetune
+# CogVideoX Full Finetune
 
 <Gallery />
 
 ## Model description
 
-This is a lora finetune of the CogVideoX model `{base_model}`.
-
-The model was trained using [CogVideoX Factory](https://github.com/a-r-r-o-w/cogvideox-factory) - a repository containing memory-optimized training scripts for the CogVideoX family of models using [TorchAO](https://github.com/pytorch/ao) and [DeepSpeed](https://github.com/microsoft/DeepSpeed). The scripts were adopted from [CogVideoX Diffusers trainer](https://github.com/huggingface/diffusers/blob/main/examples/cogvideo/train_cogvideox_lora.py).
-
-## Download model
-
-[Download LoRA]({repo_id}/tree/main) in the Files & Versions tab.
-
-## Usage
-
-Requires the [🧨 Diffusers library](https://github.com/huggingface/diffusers) installed.
-
-```py
-import torch
-from diffusers import CogVideoXImageToVideoPipeline
-from diffusers.utils import export_to_video, load_image
-
-pipe = CogVideoXImageToVideoPipeline.from_pretrained("THUDM/CogVideoX-5b-I2V", torch_dtype=torch.bfloat16).to("cuda")
-pipe.load_lora_weights("{repo_id}", weight_name="pytorch_lora_weights.safetensors", adapter_name="cogvideox-lora")
-
-# The LoRA adapter weights are determined by what was used for training.
-# In this case, we assume `--lora_alpha` is 32 and `--rank` is 64.
-# It can be made lower or higher from what was used in training to decrease or amplify the effect
-# of the LoRA upto a tolerance, beyond which one might notice no effect at all or overflows.
-pipe.set_adapters(["cogvideox-lora"], [32 / 64])
-
-image = load_image("/path/to/image.png")
-video = pipe(image=image, prompt="{validation_prompt}", guidance_scale=6, use_dynamic_cfg=True).frames[0]
-export_to_video(video, "output.mp4", fps=8)
-```
-
-For more details, including weighting, merging and fusing LoRAs, check the [documentation](https://huggingface.co/docs/diffusers/main/en/using-diffusers/loading_adapters) on loading LoRAs in diffusers.
+This is a full finetune of the CogVideoX model `{base_model}`.
 
 ## License
 
@@ -146,10 +114,8 @@ Please adhere to the licensing terms as described [here](https://huggingface.co/
         "image-to-video",
         "diffusers-training",
         "diffusers",
-        "lora",
         "cogvideox",
         "cogvideox-diffusers",
-        "template:sd-lora",
     ]
 
     model_card = populate_model_card(model_card, tags=tags)
@@ -371,7 +337,6 @@ def main(args):
         variant=args.variant,
     )
 
-    # These changes will also be required when trying to run inference with the trained lora
     if args.ignore_learned_positional_embeddings:
         del transformer.patch_embed.pos_embedding
         transformer.patch_embed.use_learned_positional_embeddings = False
@@ -391,10 +356,9 @@ def main(args):
     if args.enable_tiling:
         vae.enable_tiling()
 
-    # We only train the additional adapter LoRA layers
     text_encoder.requires_grad_(False)
-    transformer.requires_grad_(False)
     vae.requires_grad_(False)
+    transformer.requires_grad_(True)
 
     VAE_SCALING_FACTOR = vae.config.scaling_factor
     VAE_SCALE_FACTOR_SPATIAL = 2 ** (len(vae.config.block_out_channels) - 1)
@@ -435,24 +399,15 @@ def main(args):
     if args.gradient_checkpointing:
         transformer.enable_gradient_checkpointing()
 
-    # now we will add new LoRA weights to the attention layers
-    transformer_lora_config = LoraConfig(
-        r=args.rank,
-        lora_alpha=args.lora_alpha,
-        init_lora_weights=True,
-        target_modules=["to_k", "to_q", "to_v", "to_out.0"],
-    )
-    transformer.add_adapter(transformer_lora_config)
-
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
     def save_model_hook(models, weights, output_dir):
         if accelerator.is_main_process:
-            transformer_lora_layers_to_save = None
-
             for model in models:
                 if isinstance(unwrap_model(accelerator, model), type(unwrap_model(accelerator, transformer))):
                     model = unwrap_model(accelerator, model)
-                    transformer_lora_layers_to_save = get_peft_model_state_dict(model)
+                    model.save_pretrained(
+                        os.path.join(output_dir, "transformer"), safe_serialization=True, max_shard_size="5GB"
+                    )
                 else:
                     raise ValueError(f"Unexpected save model: {model.__class__}")
 
@@ -460,13 +415,9 @@ def main(args):
                 if weights:
                     weights.pop()
 
-            CogVideoXImageToVideoPipeline.save_lora_weights(
-                output_dir,
-                transformer_lora_layers=transformer_lora_layers_to_save,
-            )
-
     def load_model_hook(models, input_dir):
         transformer_ = None
+        init_under_meta = False
 
         # This is a bit of a hack but I don't know any other solution.
         if not accelerator.distributed_type == DistributedType.DEEPSPEED:
@@ -478,32 +429,21 @@ def main(args):
                 else:
                     raise ValueError(f"Unexpected save model: {unwrap_model(accelerator, model).__class__}")
         else:
-            transformer_ = CogVideoXTransformer3DModel.from_pretrained(
-                args.pretrained_model_name_or_path, subfolder="transformer"
-            )
-            transformer_.add_adapter(transformer_lora_config)
-
-        lora_state_dict = CogVideoXImageToVideoPipeline.lora_state_dict(input_dir)
-
-        transformer_state_dict = {
-            f'{k.replace("transformer.", "")}': v for k, v in lora_state_dict.items() if k.startswith("transformer.")
-        }
-        transformer_state_dict = convert_unet_state_dict_to_peft(transformer_state_dict)
-        incompatible_keys = set_peft_model_state_dict(transformer_, transformer_state_dict, adapter_name="default")
-        if incompatible_keys is not None:
-            # check only for unexpected keys
-            unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-            if unexpected_keys:
-                logger.warning(
-                    f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
-                    f" {unexpected_keys}. "
+            with init_empty_weights():
+                transformer_ = CogVideoXTransformer3DModel.from_config(
+                    args.pretrained_model_name_or_path, subfolder="transformer"
                 )
+                init_under_meta = True
+
+        load_model = CogVideoXTransformer3DModel.from_pretrained(os.path.join(input_dir, "transformer"))
+        transformer_.register_to_config(**load_model.config)
+        transformer_.load_state_dict(load_model.state_dict(), assign=init_under_meta)
+        del load_model
 
         # Make sure the trainable params are in float32. This is again needed since the base models
         # are in `weight_dtype`. More details:
         # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
         if args.mixed_precision == "fp16":
-            # only upcast trainable parameters (LoRA) into fp32
             cast_training_params([transformer_])
 
     accelerator.register_save_state_pre_hook(save_model_hook)
@@ -521,14 +461,13 @@ def main(args):
 
     # Make sure the trainable params are in float32.
     if args.mixed_precision == "fp16":
-        # only upcast trainable parameters (LoRA) into fp32
         cast_training_params([transformer], dtype=torch.float32)
 
-    transformer_lora_parameters = list(filter(lambda p: p.requires_grad, transformer.parameters()))
+    transformer_parameters = list(filter(lambda p: p.requires_grad, transformer.parameters()))
 
     # Optimization parameters
     transformer_parameters_with_lr = {
-        "params": transformer_lora_parameters,
+        "params": transformer_parameters,
         "lr": args.learning_rate,
     }
     params_to_optimize = [transformer_parameters_with_lr]
@@ -643,8 +582,8 @@ def main(args):
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
-    if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
-        tracker_name = args.tracker_name or "cogvideox-lora"
+    if accelerator.is_main_process:
+        tracker_name = args.tracker_name or "cogvideox-sft"
         accelerator.init_trackers(tracker_name, config=vars(args))
 
         accelerator.print("===== Memory before training =====")
@@ -714,7 +653,6 @@ def main(args):
 
     for epoch in range(first_epoch, args.num_train_epochs):
         transformer.train()
-
         for step, batch in enumerate(train_dataloader):
             models_to_accumulate = [transformer]
             logs = {}
@@ -804,7 +742,7 @@ def main(args):
                 # (this is the forward diffusion process)
                 noisy_video_latents = scheduler.add_noise(video_latents, noise, timesteps)
                 noisy_model_input = torch.cat([noisy_video_latents, image_latents], dim=2)
-
+                model_config.patch_size_t if hasattr(model_config, "patch_size_t") else None,
                 ofs_embed_dim = model_config.ofs_embed_dim if hasattr(model_config, "ofs_embed_dim") else None,
                 ofs_emb = None if ofs_embed_dim is None else noisy_model_input.new_full((1,), fill_value=2.0)
                 # Predict the noise residual
@@ -832,7 +770,7 @@ def main(args):
                 loss = loss.mean()
                 accelerator.backward(loss)
 
-                if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
+                if accelerator.sync_gradients:
                     gradient_norm_before_clip = get_gradient_norm(transformer.parameters())
                     accelerator.clip_grad_norm_(transformer.parameters(), args.max_grad_norm)
                     gradient_norm_after_clip = get_gradient_norm(transformer.parameters())
@@ -842,7 +780,6 @@ def main(args):
                             "gradient_norm_after_clip": gradient_norm_after_clip,
                         }
                     )
-
                 if accelerator.state.deepspeed_plugin is None:
                     optimizer.step()
                     optimizer.zero_grad()
@@ -908,7 +845,6 @@ def main(args):
             )
             if should_run_validation:
                 run_validation(args, accelerator, transformer, scheduler, model_config, weight_dtype)
-
     accelerator.wait_for_everyone()
 
     if accelerator.is_main_process:
@@ -921,11 +857,11 @@ def main(args):
             else torch.float32
         )
         transformer = transformer.to(dtype)
-        transformer_lora_layers = get_peft_model_state_dict(transformer)
 
-        CogVideoXImageToVideoPipeline.save_lora_weights(
-            save_directory=args.output_dir,
-            transformer_lora_layers=transformer_lora_layers,
+        transformer.save_pretrained(
+            os.path.join(args.output_dir, "transformer"),
+            safe_serialization=True,
+            max_shard_size="5GB",
         )
 
         # Cleanup trained models to save memory
@@ -957,11 +893,6 @@ def main(args):
             pipe.vae.enable_tiling()
         if args.enable_model_cpu_offload:
             pipe.enable_model_cpu_offload()
-
-        # Load LoRA weights
-        lora_scaling = args.lora_alpha / args.rank
-        pipe.load_lora_weights(args.output_dir, adapter_name="cogvideox-lora")
-        pipe.set_adapters(["cogvideox-lora"], [lora_scaling])
 
         # Run inference
         validation_outputs = []
