@@ -20,7 +20,7 @@ ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_1.yaml"
 # This example assumes you downloaded an already prepared dataset from HF CLI as follows:
 #   huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir /path/to/my/datasets/disney-dataset
 DATA_ROOT="/path/to/my/datasets/disney-dataset"
-CAPTION_COLUMN="prompt.txt"
+CAPTION_COLUMN="prompts.txt"
 VIDEO_COLUMN="videos.txt"
 
 # Launch experiments with different hyperparameters
