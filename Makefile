@@ -1,6 +1,6 @@
 .PHONY: quality style
 
-check_dirs := training tests
+check_dirs := training tests captioning
 
 quality:
 	ruff check $(check_dirs)
