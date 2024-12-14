@@ -118,7 +118,7 @@ Before starting the training, please check whether the dataset has been prepared
         for steps in "${MAX_TRAIN_STEPS[@]}"; do
           output_dir="/path/to/my/models/cogvideox-lora__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
-          cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox_text_to_video_lora.py \
+          cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox/cogvideox_text_to_video_lora.py \
             --pretrained_model_name_or_path THUDM/CogVideoX-5b \
             --data_root $DATA_ROOT \
             --caption_column $CAPTION_COLUMN \
@@ -449,7 +449,6 @@ With `train_batch_size = 4`:
 - [ ] vLLM-powered captioning script
 - [x] Multi-resolution/frame support in `prepare_dataset.py`
 - [ ] Analyzing traces for potential speedups and removing as many syncs as possible
-- [ ] Support for QLoRA (priority), and other types of high usage LoRAs methods
 - [x] Test scripts with memory-efficient optimizer from bitsandbytes
 - [x] Test scripts with CPUOffloadOptimizer, etc.
 - [ ] Test scripts with torchao quantization, and low bit memory optimizers (Currently errors with AdamW (8/4-bit torchao))

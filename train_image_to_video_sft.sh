@@ -37,7 +37,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
 
         cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE \
           --gpu_ids $GPU_IDS \
-          training/cogvideox_image_to_video_sft.py \
+          training/cogvideox/cogvideox_image_to_video_sft.py \
           --pretrained_model_name_or_path  $MODEL_PATH \
           --data_root $DATA_ROOT \
           --caption_column $CAPTION_COLUMN \
