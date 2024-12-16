@@ -174,4 +174,5 @@ LTX_VIDEO_T2V_CONFIG = {
     "prepare_conditions": prepare_conditions,
     "prepare_latents": prepare_latents,
     "collate_fn": collate_fn_t2v,
+    "forward_pass": forward_pass,
 }
