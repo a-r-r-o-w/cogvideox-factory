@@ -380,12 +380,16 @@ class Trainer:
                     weights = compute_density_for_timestep_sampling(
                         weighting_scheme=self.args.flow_weighting_scheme,
                         batch_size=batch_size,
-                        logit_mean=self.args.logit_mean,
-                        logit_std=self.args.logit_std,
-                        mode_scale=self.args.mode_scale,
+                        logit_mean=self.args.flow_logit_mean,
+                        logit_std=self.args.flow_logit_std,
+                        mode_scale=self.args.flow_mode_scale,
                     )
-                    indices = (weights * self.scheduler.config_num_train_timesteps).long()
-                    sigmas = scheduler_sigmas[indices]
+                    indices = (weights * self.scheduler.config.num_train_timesteps).long()
+                    sigmas = scheduler_sigmas[indices].flatten()
+
+                    while sigmas.ndim < latent_conditions["latents"].ndim:
+                        sigmas = sigmas.unsqueeze(-1)
+                    
                     timesteps = (sigmas * 1000.0).long()
 
                     noise = torch.randn(latent_conditions["latents"].shape, generator=generator, device=accelerator.device, dtype=weight_dtype)

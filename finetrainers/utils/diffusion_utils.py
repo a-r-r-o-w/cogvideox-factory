@@ -2,7 +2,7 @@ import torch
 
 
 # Default values copied from https://github.com/huggingface/diffusers/blob/8957324363d8b239d82db4909fbf8c0875683e3d/src/diffusers/schedulers/scheduling_flow_match_euler_discrete.py#L47
-def resolution_dependant_timestep_shift(
+def resolution_dependant_timestep_flow_shift(
     latents: torch.Tensor,
     sigmas: torch.Tensor,
     base_image_seq_len: int = 256,

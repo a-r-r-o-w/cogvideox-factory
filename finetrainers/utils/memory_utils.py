@@ -22,6 +22,6 @@ def make_contiguous(x: Union[torch.Tensor, Dict[str, torch.Tensor]]) -> Union[to
     if isinstance(x, torch.Tensor):
         return x.contiguous()
     elif isinstance(x, dict):
-        {k: make_contiguous(v) for k, v in x.items()}
+        return {k: make_contiguous(v) for k, v in x.items()}
     else:
         return x
