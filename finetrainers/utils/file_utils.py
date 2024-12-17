@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Union
 
 
 logger = logging.getLogger("finetrainers")
+logger.setLevel(os.environ.get("FINETRAINERS_LOG_LEVEL", "INFO"))
 
 
 def find_files(dir: Union[str, Path], prefix: str = "checkpoint") -> List[str]:

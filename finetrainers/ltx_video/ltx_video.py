@@ -2,13 +2,14 @@ from typing import Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
+from accelerate.logging import get_logger
 from diffusers import AutoencoderKLLTXVideo, FlowMatchEulerDiscreteScheduler, LTXPipeline, LTXVideoTransformer3DModel
 from diffusers.utils import logging
 from transformers import T5EncoderModel, T5Tokenizer
 from PIL import Image
 
 
-logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+logger = get_logger("finetrainers")  # pylint: disable=invalid-name
 
 
 def load_components(

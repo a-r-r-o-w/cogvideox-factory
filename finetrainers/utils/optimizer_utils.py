@@ -1,9 +1,10 @@
 import inspect
 import logging
 
+from accelerate.logging import get_logger
 import torch
 
-logger = logging.getLogger("finetrainers")
+logger = get_logger("finetrainers")
 
 
 def get_optimizer(

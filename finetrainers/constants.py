@@ -18,3 +18,33 @@ for frames in DEFAULT_FRAME_BUCKETS:
 
 
 FINETRAINERS_LOG_LEVEL = os.environ.get("FINETRAINERS_LOG_LEVEL", "INFO")
+
+MODEL_DESCRIPTION = r"""
+\# {model_id} {training_type} finetune
+
+<Gallery />
+
+\#\# Model Description
+
+This model is a {training_type} of the `{model_id}` model.
+
+This model was trained using the `fine-video-trainers` library - a repository containing memory-optimized scripts for training video models with [Diffusers](https://github.com/huggingface/diffusers).
+
+\#\# Download model
+
+[Download LoRA]({repo_id}/tree/main) in the Files & Versions tab.
+
+\#\# Usage
+
+Requires [🧨 Diffusers](https://github.com/huggingface/diffusers) installed.
+
+```python
+{model_example}
+```
+
+For more details, including weighting, merging and fusing LoRAs, check the [documentation](https://huggingface.co/docs/diffusers/main/en/using-diffusers/loading_adapters) on loading LoRAs in diffusers.
+
+\#\# License
+
+Please adhere to the license of the base model.
+""".strip()
