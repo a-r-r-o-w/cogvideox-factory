@@ -418,8 +418,10 @@ class Trainer:
                     loss = loss.mean(list(range(1, loss.ndim)))
                     # Average loss across batch dimension
                     loss = loss.mean()
-
                     accelerator.backward(loss)
+
+                    if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
+                        accelerator.clip_grad_norm_(self.transformer.parameters(), self.args.max_grad_norm)
 
                     self.optimizer.step()
                     self.lr_scheduler.step()
