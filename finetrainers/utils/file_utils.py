@@ -31,4 +31,13 @@ def delete_files(dirs: Union[str, List[str], Path, List[Path]]) -> None:
 
 
 def string_to_filename(s: str) -> str:
-    return s.replace(" ", "-").replace("/", "-").replace(":", "-").replace(".", "-").replace(",", "-").replace(";", "-").replace("!", "-").replace("?", "-")
+    return (
+        s.replace(" ", "-")
+        .replace("/", "-")
+        .replace(":", "-")
+        .replace(".", "-")
+        .replace(",", "-")
+        .replace(";", "-")
+        .replace("!", "-")
+        .replace("?", "-")
+    )

@@ -18,6 +18,6 @@ class State:
 
     # Hub state
     repo_id: str = None
-    
+
     # Artifacts state
     output_dir: str = None

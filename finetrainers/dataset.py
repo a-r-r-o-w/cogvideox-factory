@@ -21,6 +21,7 @@ decord.bridge.set_bridge("torch")
 
 logger = get_logger(__name__)
 
+
 class VideoDataset(Dataset):
     def __init__(
         self,

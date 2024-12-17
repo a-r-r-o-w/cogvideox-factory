@@ -17,7 +17,7 @@ def resolution_dependant_timestep_flow_shift(
         image_or_video_sequence_length = latents.shape[2] * latents.shape[3] * latents.shape[4]
     else:
         raise ValueError(f"Expected 4D or 5D tensor, got {latents.ndim}D tensor")
-    
+
     m = (max_shift - base_shift) / (max_image_seq_len - base_image_seq_len)
     b = base_shift - m * base_image_seq_len
     mu = m * image_or_video_sequence_length + b

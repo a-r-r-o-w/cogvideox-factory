@@ -19,11 +19,21 @@ def load_components(
     cache_dir: Optional[str] = None,
 ) -> Dict[str, nn.Module]:
     tokenizer = T5Tokenizer.from_pretrained(model_id, subfolder="tokenizer", cache_dir=cache_dir)
-    text_encoder = T5EncoderModel.from_pretrained(model_id, subfolder="text_encoder", torch_dtype=text_encoder_dtype, cache_dir=cache_dir)
-    transformer = LTXVideoTransformer3DModel.from_pretrained(model_id, subfolder="transformer", torch_dtype=transformer_dtype, cache_dir=cache_dir)
+    text_encoder = T5EncoderModel.from_pretrained(
+        model_id, subfolder="text_encoder", torch_dtype=text_encoder_dtype, cache_dir=cache_dir
+    )
+    transformer = LTXVideoTransformer3DModel.from_pretrained(
+        model_id, subfolder="transformer", torch_dtype=transformer_dtype, cache_dir=cache_dir
+    )
     vae = AutoencoderKLLTXVideo.from_pretrained(model_id, subfolder="vae", torch_dtype=vae_dtype, cache_dir=cache_dir)
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(model_id, subfolder="scheduler", cache_dir=cache_dir)
-    return {"tokenizer": tokenizer, "text_encoder": text_encoder, "transformer": transformer, "vae": vae, "scheduler": scheduler}
+    return {
+        "tokenizer": tokenizer,
+        "text_encoder": text_encoder,
+        "transformer": transformer,
+        "vae": vae,
+        "scheduler": scheduler,
+    }
 
 
 def initialize_pipeline(
@@ -42,12 +52,18 @@ def initialize_pipeline(
     enable_tiling: bool = False,
     enable_model_cpu_offload: bool = False,
 ) -> LTXPipeline:
-    component_name_pairs = [("tokenizer", tokenizer), ("text_encoder", text_encoder), ("transformer", transformer), ("vae", vae), ("scheduler", scheduler)]
+    component_name_pairs = [
+        ("tokenizer", tokenizer),
+        ("text_encoder", text_encoder),
+        ("transformer", transformer),
+        ("vae", vae),
+        ("scheduler", scheduler),
+    ]
     components = {}
     for name, component in component_name_pairs:
         if component is not None:
             components[name] = component
-    
+
     pipe = LTXPipeline.from_pretrained(model_id, **components, cache_dir=cache_dir)
     pipe.text_encoder = pipe.text_encoder.to(dtype=text_encoder_dtype)
     pipe.transformer = pipe.transformer.to(dtype=transformer_dtype)
@@ -57,12 +73,12 @@ def initialize_pipeline(
         pipe.vae.enable_slicing()
     if enable_tiling:
         pipe.vae.enable_tiling()
-    
+
     if enable_model_cpu_offload:
         pipe.enable_model_cpu_offload(device=device)
     else:
         pipe.to(device=device)
-    
+
     return pipe
 
 
@@ -76,10 +92,10 @@ def prepare_conditions(
 ) -> torch.Tensor:
     device = device or text_encoder.device
     dtype = dtype or text_encoder.dtype
-    
+
     if isinstance(prompt, str):
         prompt = [prompt]
-    
+
     return _encode_prompt_t5(tokenizer, text_encoder, prompt, device, dtype, max_sequence_length)
 
 
@@ -203,10 +219,7 @@ def _encode_prompt_t5(
 
 
 def _normalize_latents(
-    latents: torch.Tensor,
-    latents_mean: torch.Tensor,
-    latents_std: torch.Tensor,
-    scaling_factor: float = 1.0
+    latents: torch.Tensor, latents_mean: torch.Tensor, latents_std: torch.Tensor, scaling_factor: float = 1.0
 ) -> torch.Tensor:
     # Normalize latents across the channel dimension [B, C, F, H, W]
     latents_mean = latents_mean.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)

@@ -13,7 +13,7 @@ class Args:
             Resolution-dependant shifting of timestep schedules.
             [Scaling Rectified Flow Transformers for High-Resolution Image Synthesis](https://arxiv.org/abs/2403.03206)
     """
-    
+
     # Model arguments
     model_name: str = None
     pretrained_model_name_or_path: str = None
@@ -196,7 +196,7 @@ def parse_arguments() -> Args:
     _add_optimizer_arguments(parser)
     _add_validation_arguments(parser)
     _add_miscellaneous_arguments(parser)
-    
+
     args = parser.parse_args()
     return _map_to_args_type(args)
 
@@ -237,17 +237,21 @@ def _add_model_arguments(parser: argparse.ArgumentParser) -> None:
 def _add_dataset_arguments(parser: argparse.ArgumentParser) -> None:
     def parse_resolution_bucket(resolution_bucket: str) -> Tuple[int, ...]:
         return tuple(map(int, resolution_bucket.split("x")))
-    
+
     def parse_image_resolution_bucket(resolution_bucket: str) -> Tuple[int, int]:
         resolution_bucket = parse_resolution_bucket(resolution_bucket)
-        assert len(resolution_bucket) == 2, f"Expected 2D resolution bucket, got {len(resolution_bucket)}D resolution bucket"
+        assert (
+            len(resolution_bucket) == 2
+        ), f"Expected 2D resolution bucket, got {len(resolution_bucket)}D resolution bucket"
         return resolution_bucket
 
     def parse_video_resolution_bucket(resolution_bucket: str) -> Tuple[int, int, int]:
         resolution_bucket = parse_resolution_bucket(resolution_bucket)
-        assert len(resolution_bucket) == 3, f"Expected 3D resolution bucket, got {len(resolution_bucket)}D resolution bucket"
+        assert (
+            len(resolution_bucket) == 3
+        ), f"Expected 3D resolution bucket, got {len(resolution_bucket)}D resolution bucket"
         return resolution_bucket
-    
+
     parser.add_argument(
         "--data_root",
         type=str,
@@ -278,8 +282,20 @@ def _add_dataset_arguments(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Identifier token appended to the start of each prompt if provided.",
     )
-    parser.add_argument("--image_resolution_buckets", type=parse_image_resolution_bucket, default=None, nargs="+", help="Resolution buckets for images.")
-    parser.add_argument("--video_resolution_buckets", type=parse_video_resolution_bucket, default=None, nargs="+", help="Resolution buckets for videos.")
+    parser.add_argument(
+        "--image_resolution_buckets",
+        type=parse_image_resolution_bucket,
+        default=None,
+        nargs="+",
+        help="Resolution buckets for images.",
+    )
+    parser.add_argument(
+        "--video_resolution_buckets",
+        type=parse_video_resolution_bucket,
+        default=None,
+        nargs="+",
+        help="Resolution buckets for videos.",
+    )
     parser.add_argument(
         "--video_reshape_mode",
         type=str,
@@ -292,7 +308,13 @@ def _add_dataset_arguments(parser: argparse.ArgumentParser) -> None:
         default=0.00,
         help="Probability of dropout for the caption tokens.",
     )
-    parser.add_argument("--caption_dropout_technique", type=str, default="empty", choices=["empty", "zero"], help="Technique to use for caption dropout.")
+    parser.add_argument(
+        "--caption_dropout_technique",
+        type=str,
+        default="empty",
+        choices=["empty", "zero"],
+        help="Technique to use for caption dropout.",
+    )
 
 
 def _add_dataloader_arguments(parser: argparse.ArgumentParser) -> None:
@@ -323,10 +345,16 @@ def _add_diffusion_arguments(parser: argparse.ArgumentParser) -> None:
         help=('We default to the "none" weighting scheme for uniform sampling and uniform loss'),
     )
     parser.add_argument(
-        "--flow_logit_mean", type=float, default=0.0, help="mean to use when using the `'logit_normal'` weighting scheme."
+        "--flow_logit_mean",
+        type=float,
+        default=0.0,
+        help="mean to use when using the `'logit_normal'` weighting scheme.",
     )
     parser.add_argument(
-        "--flow_logit_std", type=float, default=1.0, help="std to use when using the `'logit_normal'` weighting scheme."
+        "--flow_logit_std",
+        type=float,
+        default=1.0,
+        help="std to use when using the `'logit_normal'` weighting scheme.",
     )
     parser.add_argument(
         "--flow_mode_scale",
@@ -375,7 +403,9 @@ def _add_training_arguments(parser: argparse.ArgumentParser) -> None:
         default=64,
         help="The lora_alpha to compute scaling factor (lora_alpha / rank) for LoRA matrices.",
     )
-    parser.add_argument("--target_modules", type=str, default="to_k to_q to_v to_out.0", nargs="+", help="The target modules for LoRA.")
+    parser.add_argument(
+        "--target_modules", type=str, default="to_k to_q to_v to_out.0", nargs="+", help="The target modules for LoRA."
+    )
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
@@ -626,7 +656,7 @@ def _map_to_args_type(args: Dict[str, Any]) -> Args:
     # Dataset arguments
     if args.data_root is None and args.dataset_file is None:
         raise ValueError("At least one of `data_root` or `dataset_file` should be provided.")
-    
+
     result_args.data_root = args.data_root
     result_args.dataset_file = args.dataset_file
     result_args.video_column = args.video_column
@@ -704,14 +734,14 @@ def _map_to_args_type(args: Dict[str, Any]) -> Args:
         validation_images = [None] * len(validation_prompts)
     if validation_videos is None:
         validation_videos = [None] * len(validation_prompts)
-    
+
     result_args.validation_prompts = stripped_validation_prompts
     result_args.validation_heights = validation_heights
     result_args.validation_widths = validation_widths
     result_args.validation_num_frames = validation_num_frames
     result_args.validation_images = validation_images
     result_args.validation_videos = validation_videos
-    
+
     result_args.num_validation_videos_per_prompt = args.num_validation_videos
     result_args.validation_every_n_epochs = args.validation_epochs
     result_args.validation_every_n_steps = args.validation_steps
@@ -734,8 +764,16 @@ def _map_to_args_type(args: Dict[str, Any]) -> Args:
 def _validate_validation_args(args: Args):
     assert args.validation_prompts is not None, "Validation prompts are required for validation"
     if args.validation_images is not None:
-        assert len(args.validation_images) == len(args.validation_prompts), "Validation images and prompts should be of same length"
+        assert len(args.validation_images) == len(
+            args.validation_prompts
+        ), "Validation images and prompts should be of same length"
     if args.validation_videos is not None:
-        assert len(args.validation_videos) == len(args.validation_prompts), "Validation videos and prompts should be of same length"
-    assert len(args.validation_prompts) == len(args.validation_heights), "Validation prompts and heights should be of same length"
-    assert len(args.validation_prompts) == len(args.validation_widths), "Validation prompts and widths should be of same length"
+        assert len(args.validation_videos) == len(
+            args.validation_prompts
+        ), "Validation videos and prompts should be of same length"
+    assert len(args.validation_prompts) == len(
+        args.validation_heights
+    ), "Validation prompts and heights should be of same length"
+    assert len(args.validation_prompts) == len(
+        args.validation_widths
+    ), "Validation prompts and widths should be of same length"

@@ -16,15 +16,15 @@ def main():
         multiprocessing.set_start_method("fork")
     except Exception as e:
         logger.error(
-            f"Failed to set multiprocessing start method to \"fork\". This can lead to poor performance, high memory usage, or crashes. "
+            f'Failed to set multiprocessing start method to "fork". This can lead to poor performance, high memory usage, or crashes. '
             f"See: https://pytorch.org/docs/stable/notes/multiprocessing.html\n"
             f"Error: {e}"
         )
-    
+
     try:
         args = parse_arguments()
         trainer = Trainer(args)
-        
+
         trainer.prepare_dataset()
         trainer.prepare_models()
         trainer.prepare_trainable_parameters()
@@ -33,7 +33,7 @@ def main():
         trainer.prepare_trackers()
         trainer.train()
         trainer.evaluate()
-    
+
     except KeyboardInterrupt:
         logger.info("Received keyboard interrupt. Exiting...")
     except Exception as e:
