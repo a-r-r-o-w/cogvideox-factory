@@ -1,7 +1,7 @@
 import logging
 import traceback
 
-from finetrainers import Args, Trainer, parse_arguments
+from finetrainers import Trainer, parse_arguments
 from finetrainers.constants import FINETRAINERS_LOG_LEVEL
 
 
@@ -29,6 +29,7 @@ def main():
         trainer.prepare_models()
         trainer.prepare_trainable_parameters()
         trainer.prepare_optimizer()
+        trainer.prepare_for_training()
         trainer.prepare_trackers()
         trainer.train()
         trainer.evaluate()

@@ -13,22 +13,25 @@ import diffusers
 import torch
 import torch.backends
 import transformers
+import wandb
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs, ProjectConfiguration, set_seed
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params, compute_density_for_timestep_sampling, compute_loss_weighting_for_sd3
+from diffusers.utils import export_to_video, load_image, load_video
 from huggingface_hub import create_repo, upload_folder
 from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dict
 from tqdm import tqdm
 
-from .args import Args
+from .args import Args, validate_args
 from .constants import FINETRAINERS_LOG_LEVEL
 from .dataset import BucketSampler, VideoDatasetWithResizing
 from .models import get_config_from_model_name
 from .state import State
+from .utils.file_utils import find_files, delete_files, string_to_filename
 from .utils.optimizer_utils import get_optimizer, gradient_norm
-from .utils.memory_utils import bytes_to_gigabytes, make_contiguous
+from .utils.memory_utils import get_memory_statistics, free_memory, make_contiguous
 from .utils.torch_utils import unwrap_model
 
 
@@ -37,9 +40,9 @@ logger.setLevel(FINETRAINERS_LOG_LEVEL)
 
 class Trainer:
     def __init__(self, args: Args) -> None:
-        self.args = args
-        _validate_args(args)
+        validate_args(args)
         
+        self.args = args
         self.state = State()
         
         # Tokenizers
@@ -65,32 +68,6 @@ class Trainer:
 
         self.state.model_name = self.args.model_name
         self.model_config = get_config_from_model_name(self.args.model_name)
-    
-    def get_memory_statistics(self, precision: int = 3) -> Dict[str, Any]:
-        memory_allocated = None
-        memory_reserved = None
-        max_memory_allocated = None
-        max_memory_reserved = None
-        
-        if torch.cuda.is_available():
-            device = torch.cuda.current_device()
-            memory_allocated = torch.cuda.memory_allocated(device)
-            memory_reserved = torch.cuda.memory_reserved(device)
-            max_memory_allocated = torch.cuda.max_memory_allocated(device)
-            max_memory_reserved = torch.cuda.max_memory_reserved(device)
-        
-        elif torch.mps.is_available():
-            memory_allocated = torch.mps.current_allocated_memory()
-        
-        else:
-            logger.warning("No CUDA, MPS, or ROCm device found. Memory statistics are not available.")
-        
-        return {
-            "memory_allocated": round(bytes_to_gigabytes(memory_allocated), ndigits=precision),
-            "memory_reserved": round(bytes_to_gigabytes(memory_reserved), ndigits=precision),
-            "max_memory_allocated": round(bytes_to_gigabytes(max_memory_allocated), ndigits=precision),
-            "max_memory_reserved": round(bytes_to_gigabytes(max_memory_reserved), ndigits=precision),
-        }
 
     def prepare_models(self) -> None:
         logger.info("Initializing models")
@@ -111,6 +88,8 @@ class Trainer:
         self.transformer = components.get("transformer", None)
         self.vae = components.get("vae", None)
         self.scheduler = components.get("scheduler", None)
+
+        self.transformer_config = self.transformer.config if self.transformer is not None else None
 
     def prepare_dataset(self) -> None:
         logger.info("Initializing dataset and dataloader")
@@ -301,7 +280,7 @@ class Trainer:
     def train(self) -> None:
         logger.info("Starting training")
 
-        memory_statistics = self.get_memory_statistics()
+        memory_statistics = get_memory_statistics()
         logger.info(f"Memory before training start: {json.dumps(memory_statistics, indent=4)}")
 
         self.state.train_batch_size = self.args.batch_size * self.state.accelerator.num_processes * self.args.gradient_accumulation_steps
@@ -326,11 +305,11 @@ class Trainer:
 
         accelerator = self.state.accelerator
         weight_dtype = self.state.weight_dtype
-        transformer_config = self.transformer.config
         scheduler_sigmas = self.scheduler.sigmas.clone().to(device=accelerator.device, dtype=weight_dtype)
         generator = torch.Generator(device=accelerator.device)
         if self.args.seed is not None:
             generator = generator.manual_seed(self.args.seed)
+        self.state.generator = generator
         
         for epoch in range(first_epoch, self.state.train_epochs):
             logger.debug(f"Starting epoch ({epoch + 1}/{self.state.train_epochs})")
@@ -339,7 +318,7 @@ class Trainer:
             models_to_accumulate = [self.transformer]
 
             for step, batch in enumerate(self.dataloader):
-                logger.debug(f"Starting step ({step + 1})")
+                logger.debug(f"Starting step {step + 1}")
                 logs = {}
 
                 with accelerator.accumulate(models_to_accumulate):
@@ -354,8 +333,8 @@ class Trainer:
                     latent_conditions = self.model_config["prepare_latents"](
                         vae=self.vae,
                         image_or_video=videos,
-                        patch_size=transformer_config.patch_size,
-                        patch_size_t=transformer_config.patch_size_t,
+                        patch_size=self.transformer_config.patch_size,
+                        patch_size_t=self.transformer_config.patch_size_t,
                         device=accelerator.device,
                         dtype=weight_dtype,
                         generator=generator,
@@ -421,32 +400,27 @@ class Trainer:
                     global_step += 1
 
                     # Checkpointing
-                    if accelerator.is_main_process or accelerator.distributed_type == DistributedType.DEEPSPEED:
-                        logger.info(f"Checkpointing at step {global_step}")
+                    if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
                         if global_step % self.args.checkpointing_steps == 0:
-                            # _before_ saving state, check if this save would set us over the `checkpointing_limit`
+                            # before saving state, check if this save would set us over the `checkpointing_limit`
                             if self.args.checkpointing_limit is not None:
-                                checkpoints = os.listdir(self.args.output_dir)
-                                checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
-                                checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
+                                checkpoints = find_files(self.args.output_dir, prefix="checkpoint")
 
-                                # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
+                                # before we save the new checkpoint, we need to have at_most `checkpoints_total_limit - 1` checkpoints
                                 if len(checkpoints) >= self.args.checkpointing_limit:
                                     num_to_remove = len(checkpoints) - self.args.checkpointing_limit + 1
-                                    removing_checkpoints = checkpoints[0:num_to_remove]
+                                    checkpoints_to_remove = checkpoints[0:num_to_remove]
+                                    delete_files(checkpoints_to_remove)
 
-                                    logger.info(
-                                        f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
-                                    )
-                                    logger.info(f"Removing checkpoints: {', '.join(removing_checkpoints)}")
-
-                                    for removing_checkpoint in removing_checkpoints:
-                                        removing_checkpoint = os.path.join(self.args.output_dir, removing_checkpoint)
-                                        shutil.rmtree(removing_checkpoint)
-
+                            logger.info(f"Checkpointing at step {global_step}")
                             save_path = os.path.join(self.args.output_dir, f"checkpoint-{global_step}")
                             accelerator.save_state(save_path)
                             logger.info(f"Saved state to {save_path}")
+                    
+                # Maybe run validation
+                should_run_validation = self.args.validation_every_n_steps is not None and global_step % self.args.validation_every_n_steps == 0
+                if should_run_validation:
+                    self.validate(global_step)
                     
                 logs = {"loss": loss.detach().item(), "lr": self.lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(logs)
@@ -454,6 +428,14 @@ class Trainer:
 
                 if global_step >= self.state.train_steps:
                     break
+            
+            memory_statistics = get_memory_statistics()
+            logger.info(f"Memory after epoch {epoch + 1}: {json.dumps(memory_statistics, indent=4)}")
+
+            # Maybe run validation
+            should_run_validation = self.args.validation_every_n_epochs is not None and (epoch + 1) % self.args.validation_every_n_epochs == 0
+            if should_run_validation:
+                self.validate(global_step)
     
         accelerator.wait_for_everyone()
         if accelerator.is_main_process:
@@ -474,7 +456,108 @@ class Trainer:
             )
         
         del self.tokenizer, self.text_encoder, self.transformer, self.vae, self.scheduler
+        free_memory()
+        memory_statistics = get_memory_statistics()
+        logger.info(f"Memory after training end: {json.dumps(memory_statistics, indent=4)}")
+    
+    def validate(self, step: int) -> None:
+        logger.info("Starting validation")
 
+        accelerator = self.state.accelerator
+        num_validation_samples = len(self.args.validation_prompts)
+        
+        if num_validation_samples == 0:
+            logger.warning("No validation samples found. Skipping validation.")
+            return
+        
+        self.transformer.eval()
+
+        memory_statistics = get_memory_statistics()
+        logger.info(f"Memory before validation start: {json.dumps(memory_statistics, indent=4)}")
+
+        pipeline = self.model_config["initialize_pipeline"](
+            model_id=self.args.pretrained_model_name_or_path,
+            cache_dir=self.args.cache_dir,
+            tokenizer=self.tokenizer,
+            text_encoder=self.text_encoder,
+            transformer=unwrap_model(accelerator, self.transformer),
+            vae=self.vae,
+            device=accelerator.device,
+            enable_slicing=self.args.enable_slicing,
+            enable_tiling=self.args.enable_tiling,
+            enable_model_cpu_offload=self.args.enable_model_cpu_offload,
+        )
+
+        for i in range(num_validation_samples):
+            # Skip current validation on all processes but one
+            if i % accelerator.num_processes != accelerator.process_index:
+                continue
+
+            prompt = self.args.validation_prompts[i]
+            image = self.args.validation_images[i]
+            video = self.args.validation_videos[i]
+            height = self.args.validation_heights[i]
+            width = self.args.validation_widths[i]
+            num_frames = self.args.validation_num_frames[i]
+
+            if image is not None:
+                image = load_image(image)
+            if video is not None:
+                video = load_video(video)
+
+            logger.debug(f"Validating sample {i + 1}/{num_validation_samples} on process {accelerator.process_index}")
+            validation_artifacts = self.model_config["validation"](
+                pipeline=pipeline,
+                prompt=prompt,
+                image=image,
+                video=video,
+                height=height,
+                width=width,
+                num_frames=num_frames,
+                num_videos_per_prompt=self.args.num_validation_videos_per_prompt,
+                generator=self.state.generator,
+            )
+
+            prompt_filename = string_to_filename(prompt)[:25]
+            artifacts = {
+                "image": {"type": "image", "value": image},
+                "video": {"type": "video", "value": video},
+            }
+            for i, (artifact_type, artifact_value) in enumerate(validation_artifacts):
+                artifacts.update({f"artifact_{i}": {"type": artifact_type, "value": artifact_value}})
+            logger.debug(f"Validation artifacts: {artifacts.keys()}")
+            
+            artifacts_to_log = []
+            for tracker in accelerator.trackers:
+                if tracker.name == "wandb":
+                    for key, value in list(artifacts.items()):
+                        artifact_type = value["type"]
+                        artifact_value = value["value"]
+                        if artifact_type not in ["image", "video"] or artifact_value is None:
+                            continue
+                        
+                        extension = "png" if artifact_type == "image" else "mp4"
+                        filename = f"validation-{step}-{accelerator.process_index}-{prompt_filename}.{extension}"
+                        filename = os.path.join(self.args.output_dir, filename)
+                        
+                        if artifact_type == "image":
+                            logger.debug(f"Saving image to {filename}")
+                            artifact_value.save(filename)
+                            artifact_value = wandb.Image(filename)
+                        elif artifact_type == "video":
+                            logger.debug(f"Saving video to {filename}")
+                            export_to_video(artifact_value, filename, fps=15)
+                            artifact_value = wandb.Video(filename, caption=prompt)
+                        
+                        artifacts_to_log.append(artifact_value)
+                    
+                    tracker.log({"validation": artifacts_to_log})
+        
+        accelerator.wait_for_everyone()
+        free_memory()
+        memory_statistics = get_memory_statistics()
+        logger.info(f"Memory after validation end: {json.dumps(memory_statistics, indent=4)}")
+        self.transformer.train()
     
     def evaluate(self) -> None:
         logger.info("Starting evaluation")
@@ -536,7 +619,3 @@ class Trainer:
         accepted_kwargs = inspect.signature(fn).parameters.keys()
         kwargs = {k: v for k, v in kwargs.items() if k in accepted_kwargs}
         return fn(**kwargs)
-
-
-def _validate_args(args: Args):
-    return True

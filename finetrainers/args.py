@@ -86,8 +86,11 @@ class Args:
     validation_prompts: List[str] = None
     validation_images: List[str] = None
     validation_videos: List[str] = None
+    validation_heights: List[int] = None
+    validation_widths: List[int] = None
+    validation_num_frames: List[int] = None
     num_validation_videos_per_prompt: int = 1
-    validation_every_n_epochs: int = 1
+    validation_every_n_epochs: Optional[int] = None
     validation_every_n_steps: Optional[int] = None
     enable_model_cpu_offload: bool = False
 
@@ -196,6 +199,10 @@ def parse_arguments() -> Args:
     
     args = parser.parse_args()
     return _map_to_args_type(args)
+
+
+def validate_args(args: Args):
+    _validate_validation_args(args)
 
 
 def _add_model_arguments(parser: argparse.ArgumentParser) -> None:
@@ -674,9 +681,37 @@ def _map_to_args_type(args: Dict[str, Any]) -> Args:
     result_args.max_grad_norm = args.max_grad_norm
 
     # Validation arguments
-    result_args.validation_prompts = args.validation_prompts.split(args.validation_separator) if args.validation_prompts else []
-    result_args.validation_images = args.validation_images.split(args.validation_separator) if args.validation_images else []
-    result_args.validation_videos = args.validation_videos.split(args.validation_separator) if args.validation_videos else []
+    validation_prompts = args.validation_prompts.split(args.validation_separator) if args.validation_prompts else []
+    validation_images = args.validation_images.split(args.validation_separator) if args.validation_images else None
+    validation_videos = args.validation_videos.split(args.validation_separator) if args.validation_videos else None
+    stripped_validation_prompts = []
+    validation_heights = []
+    validation_widths = []
+    validation_num_frames = []
+    for prompt in validation_prompts:
+        prompt: str
+        prompt = prompt.strip()
+        actual_prompt, separator, resolution = prompt.rpartition("@@@")
+        stripped_validation_prompts.append(actual_prompt)
+        num_frames, height, width = None, None, None
+        if len(resolution) > 0:
+            num_frames, height, width = map(int, resolution.split("x"))
+        validation_num_frames.append(num_frames)
+        validation_heights.append(height)
+        validation_widths.append(width)
+
+    if validation_images is None:
+        validation_images = [None] * len(validation_prompts)
+    if validation_videos is None:
+        validation_videos = [None] * len(validation_prompts)
+    
+    result_args.validation_prompts = stripped_validation_prompts
+    result_args.validation_heights = validation_heights
+    result_args.validation_widths = validation_widths
+    result_args.validation_num_frames = validation_num_frames
+    result_args.validation_images = validation_images
+    result_args.validation_videos = validation_videos
+    
     result_args.num_validation_videos_per_prompt = args.num_validation_videos
     result_args.validation_every_n_epochs = args.validation_epochs
     result_args.validation_every_n_steps = args.validation_steps
@@ -694,3 +729,13 @@ def _map_to_args_type(args: Dict[str, Any]) -> Args:
     result_args.report_to = args.report_to
 
     return result_args
+
+
+def _validate_validation_args(args: Args):
+    assert args.validation_prompts is not None, "Validation prompts are required for validation"
+    if args.validation_images is not None:
+        assert len(args.validation_images) == len(args.validation_prompts), "Validation images and prompts should be of same length"
+    if args.validation_videos is not None:
+        assert len(args.validation_videos) == len(args.validation_prompts), "Validation videos and prompts should be of same length"
+    assert len(args.validation_prompts) == len(args.validation_heights), "Validation prompts and heights should be of same length"
+    assert len(args.validation_prompts) == len(args.validation_widths), "Validation prompts and widths should be of same length"

@@ -14,6 +14,7 @@ class State:
     num_trainable_parameters: int = 0
     learning_rate: float = None
     train_batch_size: int = None
+    generator: torch.Generator = None
 
     # Hub state
     repo_id: str = None

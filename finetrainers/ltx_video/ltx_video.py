@@ -5,6 +5,8 @@ import torch.nn as nn
 from diffusers import AutoencoderKLLTXVideo, FlowMatchEulerDiscreteScheduler, LTXPipeline, LTXVideoTransformer3DModel
 from diffusers.utils import logging
 from transformers import T5EncoderModel, T5Tokenizer
+from PIL import Image
+
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -22,6 +24,46 @@ def load_components(
     vae = AutoencoderKLLTXVideo.from_pretrained(model_id, subfolder="vae", torch_dtype=vae_dtype, cache_dir=cache_dir)
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(model_id, subfolder="scheduler", cache_dir=cache_dir)
     return {"tokenizer": tokenizer, "text_encoder": text_encoder, "transformer": transformer, "vae": vae, "scheduler": scheduler}
+
+
+def initialize_pipeline(
+    model_id: str = "Lightricks/LTX-Video",
+    text_encoder_dtype: torch.dtype = torch.bfloat16,
+    transformer_dtype: torch.dtype = torch.bfloat16,
+    vae_dtype: torch.dtype = torch.bfloat16,
+    tokenizer: Optional[T5Tokenizer] = None,
+    text_encoder: Optional[T5EncoderModel] = None,
+    transformer: Optional[LTXVideoTransformer3DModel] = None,
+    vae: Optional[AutoencoderKLLTXVideo] = None,
+    scheduler: Optional[FlowMatchEulerDiscreteScheduler] = None,
+    device: Optional[torch.device] = None,
+    cache_dir: Optional[str] = None,
+    enable_slicing: bool = False,
+    enable_tiling: bool = False,
+    enable_model_cpu_offload: bool = False,
+) -> LTXPipeline:
+    component_name_pairs = [("tokenizer", tokenizer), ("text_encoder", text_encoder), ("transformer", transformer), ("vae", vae), ("scheduler", scheduler)]
+    components = {}
+    for name, component in component_name_pairs:
+        if component is not None:
+            components[name] = component
+    
+    pipe = LTXPipeline.from_pretrained(model_id, **components, cache_dir=cache_dir)
+    pipe.text_encoder = pipe.text_encoder.to(dtype=text_encoder_dtype)
+    pipe.transformer = pipe.transformer.to(dtype=transformer_dtype)
+    pipe.vae = pipe.vae.to(dtype=vae_dtype)
+
+    if enable_slicing:
+        pipe.vae.enable_slicing()
+    if enable_tiling:
+        pipe.vae.enable_tiling()
+    
+    if enable_model_cpu_offload:
+        pipe.enable_model_cpu_offload(device=device)
+    else:
+        pipe.to(device=device)
+    
+    return pipe
 
 
 def prepare_conditions(
@@ -60,7 +102,7 @@ def prepare_latents(
     image_or_video = image_or_video.to(device=device, dtype=dtype)
     image_or_video = image_or_video.permute(0, 2, 1, 3, 4).contiguous()  # [B, C, F, H, W] -> [B, F, C, H, W]
     latents = vae.encode(image_or_video).latent_dist.sample(generator=generator)
-    _, _, num_frames, height, width = image_or_video.shape
+    _, _, num_frames, height, width = latents.shape
     latents = _normalize_latents(latents, vae.latents_mean, vae.latents_std)
     latents = _pack_latents(latents, patch_size, patch_size_t)
     return {"latents": latents, "num_frames": num_frames, "height": height, "width": width}
@@ -86,7 +128,6 @@ def forward_pass(
 ) -> torch.Tensor:
     # TODO(aryan): make configurable
     rope_interpolation_scale = [1 / 25, 32, 32]
-    batch_size, num_channels, num_frames, height, width = latents.shape
 
     denoised_latents = transformer(
         hidden_states=noisy_latents,
@@ -101,6 +142,35 @@ def forward_pass(
     )[0]
 
     return {"latents": denoised_latents}
+
+
+def validation(
+    pipeline: LTXPipeline,
+    prompt: str,
+    image: Optional[Image.Image] = None,
+    video: Optional[List[Image.Image]] = None,
+    height: Optional[int] = None,
+    width: Optional[int] = None,
+    num_frames: Optional[int] = None,
+    frame_rate: int = 25,
+    num_videos_per_prompt: int = 1,
+    generator: Optional[torch.Generator] = None,
+    **kwargs,
+):
+    generation_kwargs = {
+        "prompt": prompt,
+        "height": height,
+        "width": width,
+        "num_frames": num_frames,
+        "frame_rate": frame_rate,
+        "num_videos_per_prompt": num_videos_per_prompt,
+        "generator": generator,
+        "return_dict": True,
+        "output_type": "pil",
+    }
+    generation_kwargs = {k: v for k, v in generation_kwargs.items() if v is not None}
+    video = pipeline(**generation_kwargs).frames[0]
+    return [("video", video)]
 
 
 def _encode_prompt_t5(
@@ -171,8 +241,10 @@ def _pack_latents(latents: torch.Tensor, patch_size: int = 1, patch_size_t: int 
 LTX_VIDEO_T2V_CONFIG = {
     "pipeline_cls": LTXPipeline,
     "load_components": load_components,
+    "initialize_pipeline": initialize_pipeline,
     "prepare_conditions": prepare_conditions,
     "prepare_latents": prepare_latents,
     "collate_fn": collate_fn_t2v,
     "forward_pass": forward_pass,
+    "validation": validation,
 }
