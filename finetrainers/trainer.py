@@ -16,7 +16,13 @@ import transformers
 import wandb
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
-from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs, ProjectConfiguration, set_seed
+from accelerate.utils import (
+    DistributedDataParallelKwargs,
+    InitProcessGroupKwargs,
+    ProjectConfiguration,
+    set_seed,
+    gather_object,
+)
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import (
     cast_training_params,
@@ -499,6 +505,8 @@ class Trainer:
         memory_statistics = get_memory_statistics()
         logger.info(f"Memory after training end: {json.dumps(memory_statistics, indent=4)}")
 
+        accelerator.end_training()
+
     def validate(self, step: int) -> None:
         logger.info("Starting validation")
 
@@ -527,6 +535,7 @@ class Trainer:
             enable_model_cpu_offload=self.args.enable_model_cpu_offload,
         )
 
+        all_processes_artifacts = []
         for i in range(num_validation_samples):
             # Skip current validation on all processes but one
             if i % accelerator.num_processes != accelerator.process_index:
@@ -544,7 +553,10 @@ class Trainer:
             if video is not None:
                 video = load_video(video)
 
-            logger.debug(f"Validating sample {i + 1}/{num_validation_samples} on process {accelerator.process_index}")
+            logger.debug(
+                f"Validating sample {i + 1}/{num_validation_samples} on process {accelerator.process_index}. Prompt: {prompt}",
+                main_process_only=False,
+            )
             validation_artifacts = self.model_config["validation"](
                 pipeline=pipeline,
                 prompt=prompt,
@@ -564,33 +576,38 @@ class Trainer:
             }
             for i, (artifact_type, artifact_value) in enumerate(validation_artifacts):
                 artifacts.update({f"artifact_{i}": {"type": artifact_type, "value": artifact_value}})
-            logger.debug(f"Validation artifacts: {artifacts.keys()}")
+            logger.debug(
+                f"Validation artifacts on process {accelerator.process_index}: {list(artifacts.keys())}",
+                main_process_only=False,
+            )
 
-            artifacts_to_log = []
+            for key, value in list(artifacts.items()):
+                artifact_type = value["type"]
+                artifact_value = value["value"]
+                if artifact_type not in ["image", "video"] or artifact_value is None:
+                    continue
+
+                extension = "png" if artifact_type == "image" else "mp4"
+                filename = f"validation-{step}-{accelerator.process_index}-{prompt_filename}.{extension}"
+                filename = os.path.join(self.args.output_dir, filename)
+
+                if artifact_type == "image":
+                    logger.debug(f"Saving image to {filename}")
+                    artifact_value.save(filename)
+                    artifact_value = wandb.Image(filename)
+                elif artifact_type == "video":
+                    logger.debug(f"Saving video to {filename}")
+                    export_to_video(artifact_value, filename, fps=15)
+                    artifact_value = wandb.Video(filename, caption=prompt)
+
+                all_processes_artifacts.append(artifact_value)
+
+        all_artifacts = gather_object(all_processes_artifacts)
+
+        if accelerator.is_main_process:
             for tracker in accelerator.trackers:
                 if tracker.name == "wandb":
-                    for key, value in list(artifacts.items()):
-                        artifact_type = value["type"]
-                        artifact_value = value["value"]
-                        if artifact_type not in ["image", "video"] or artifact_value is None:
-                            continue
-
-                        extension = "png" if artifact_type == "image" else "mp4"
-                        filename = f"validation-{step}-{accelerator.process_index}-{prompt_filename}.{extension}"
-                        filename = os.path.join(self.args.output_dir, filename)
-
-                        if artifact_type == "image":
-                            logger.debug(f"Saving image to {filename}")
-                            artifact_value.save(filename)
-                            artifact_value = wandb.Image(filename)
-                        elif artifact_type == "video":
-                            logger.debug(f"Saving video to {filename}")
-                            export_to_video(artifact_value, filename, fps=15)
-                            artifact_value = wandb.Video(filename, caption=prompt)
-
-                        artifacts_to_log.append(artifact_value)
-
-                    tracker.log({"validation": artifacts_to_log})
+                    tracker.log({"validation": all_artifacts}, step=step)
 
         accelerator.wait_for_everyone()
         free_memory()
