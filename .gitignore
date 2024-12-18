@@ -168,5 +168,7 @@ cython_debug/
 wandb/
 *.txt
 dump*
+outputs*
+*.slurm
 
 !requirements.txt

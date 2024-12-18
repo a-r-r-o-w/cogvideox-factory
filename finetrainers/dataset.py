@@ -172,7 +172,7 @@ class VideoDatasetWithResizing(VideoDataset):
         video_reader = decord.VideoReader(uri=path.as_posix())
         video_num_frames = len(video_reader)
         nearest_frame_bucket = min(
-            [bucket for bucket in self.resolution_buckets if bucket <= video_num_frames],
+            [bucket for bucket in self.resolution_buckets if bucket[0] <= video_num_frames],
             key=lambda x: abs(x[0] - min(video_num_frames, self.max_num_frames)),
             default=1,
         )[0]
