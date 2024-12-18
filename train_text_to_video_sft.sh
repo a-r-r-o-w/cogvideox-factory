@@ -30,7 +30,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
       for steps in "${MAX_TRAIN_STEPS[@]}"; do
         output_dir="/path/to/my/models/cogvideox-sft__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
-        cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox_text_to_video_sft.py \
+        cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox/cogvideox_text_to_video_sft.py \
           --pretrained_model_name_or_path THUDM/CogVideoX-5b \
           --data_root $DATA_ROOT \
           --caption_column $CAPTION_COLUMN \
