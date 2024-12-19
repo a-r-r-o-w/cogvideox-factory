@@ -156,16 +156,17 @@ export NCCL_P2P_DISABLE=1
 export TORCH_NCCL_ENABLE_MONITORING=0
 export FINETRAINERS_LOG_LEVEL=DEBUG
 
-GPU_IDS="0,1"
+GPU_IDS="0,1,2,3,4,5,6,7"
 
-DATA_ROOT="/fsx/aryan/datasets/dataset-cakify-yt"
+DATA_ROOT="/path/to/dataset"
 CAPTION_COLUMN="prompts.txt"
 VIDEO_COLUMN="videos.txt"
-OUTPUT_DIR="/fsx/aryan/models/training/ltxv-loras/ltxv_cakify_2000_1e-5_constant"
+OUTPUT_DIR="/path/to/models/hunyuan-video/hunyuan-video-loras/hunyuan-video_cakify_500_3e-5_constant_with_warmup"
 
 # Model arguments
-model_cmd="--model_name ltx_video \
-  --pretrained_model_name_or_path Lightricks/LTX-Video"
+model_cmd="--model_name hunyuan_video \
+  --pretrained_model_name_or_path tencent/HunyuanVideo
+  --revision refs/pr/18"
 
 # Dataset arguments
 dataset_cmd="--data_root $DATA_ROOT \
@@ -179,14 +180,14 @@ dataset_cmd="--data_root $DATA_ROOT \
 dataloader_cmd="--dataloader_num_workers 0"
 
 # Diffusion arguments
-diffusion_cmd="--flow_resolution_shifting"
+diffusion_cmd=""
 
 # Training arguments
 training_cmd="--training_type lora \
   --seed 42 \
   --mixed_precision bf16 \
   --batch_size 1 \
-  --train_steps 1000 \
+  --train_steps 500 \
   --rank 128 \
   --lora_alpha 128 \
   --target_modules to_q to_k to_v to_out.0 \
@@ -199,8 +200,8 @@ training_cmd="--training_type lora \
 
 # Optimizer arguments
 optimizer_cmd="--optimizer adamw \
-  --lr 1e-5 \
-  --lr_scheduler constant \
+  --lr 3e-5 \
+  --lr_scheduler constant_with_warmup \
   --lr_warmup_steps 100 \
   --lr_num_cycles 1 \
   --beta1 0.9 \
@@ -220,7 +221,7 @@ miscellaneous_cmd="--tracker_name finetrainers-hunyuan-video \
   --nccl_timeout 1800 \
   --report_to wandb"
 
-cmd="accelerate launch --config_file accelerate_configs/uncompiled_2.yaml --gpu_ids $GPU_IDS train.py \
+cmd="accelerate launch --config_file accelerate_configs/uncompiled_8.yaml --gpu_ids $GPU_IDS train.py \
   $model_cmd \
   $dataset_cmd \
   $dataloader_cmd \
