@@ -17,17 +17,20 @@ def load_components(
     text_encoder_dtype: torch.dtype = torch.bfloat16,
     transformer_dtype: torch.dtype = torch.bfloat16,
     vae_dtype: torch.dtype = torch.bfloat16,
+    revision: Optional[str] = None,
     cache_dir: Optional[str] = None,
 ) -> Dict[str, nn.Module]:
-    tokenizer = T5Tokenizer.from_pretrained(model_id, subfolder="tokenizer", cache_dir=cache_dir)
+    tokenizer = T5Tokenizer.from_pretrained(model_id, subfolder="tokenizer", revision=revision, cache_dir=cache_dir)
     text_encoder = T5EncoderModel.from_pretrained(
-        model_id, subfolder="text_encoder", torch_dtype=text_encoder_dtype, cache_dir=cache_dir
+        model_id, subfolder="text_encoder", torch_dtype=text_encoder_dtype, revision=revision, cache_dir=cache_dir
     )
     transformer = LTXVideoTransformer3DModel.from_pretrained(
-        model_id, subfolder="transformer", torch_dtype=transformer_dtype, cache_dir=cache_dir
+        model_id, subfolder="transformer", torch_dtype=transformer_dtype, revision=revision, cache_dir=cache_dir
     )
-    vae = AutoencoderKLLTXVideo.from_pretrained(model_id, subfolder="vae", torch_dtype=vae_dtype, cache_dir=cache_dir)
-    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(model_id, subfolder="scheduler", cache_dir=cache_dir)
+    vae = AutoencoderKLLTXVideo.from_pretrained(
+        model_id, subfolder="vae", torch_dtype=vae_dtype, revision=revision, cache_dir=cache_dir
+    )
+    scheduler = FlowMatchEulerDiscreteScheduler()
     return {
         "tokenizer": tokenizer,
         "text_encoder": text_encoder,
@@ -48,10 +51,12 @@ def initialize_pipeline(
     vae: Optional[AutoencoderKLLTXVideo] = None,
     scheduler: Optional[FlowMatchEulerDiscreteScheduler] = None,
     device: Optional[torch.device] = None,
+    revision: Optional[str] = None,
     cache_dir: Optional[str] = None,
     enable_slicing: bool = False,
     enable_tiling: bool = False,
     enable_model_cpu_offload: bool = False,
+    **kwargs,
 ) -> LTXPipeline:
     component_name_pairs = [
         ("tokenizer", tokenizer),
@@ -65,7 +70,7 @@ def initialize_pipeline(
         if component is not None:
             components[name] = component
 
-    pipe = LTXPipeline.from_pretrained(model_id, **components, cache_dir=cache_dir)
+    pipe = LTXPipeline.from_pretrained(model_id, **components, revision=revision, cache_dir=cache_dir)
     pipe.text_encoder = pipe.text_encoder.to(dtype=text_encoder_dtype)
     pipe.transformer = pipe.transformer.to(dtype=transformer_dtype)
     pipe.vae = pipe.vae.to(dtype=vae_dtype)
@@ -90,6 +95,7 @@ def prepare_conditions(
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
     max_sequence_length: int = 128,
+    **kwargs,
 ) -> torch.Tensor:
     device = device or text_encoder.device
     dtype = dtype or text_encoder.dtype
@@ -252,7 +258,7 @@ def _pack_latents(latents: torch.Tensor, patch_size: int = 1, patch_size_t: int 
     return latents
 
 
-LTX_VIDEO_T2V_CONFIG = {
+LTX_VIDEO_T2V_LORA_CONFIG = {
     "pipeline_cls": LTXPipeline,
     "load_components": load_components,
     "initialize_pipeline": initialize_pipeline,
