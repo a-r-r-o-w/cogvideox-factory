@@ -90,7 +90,7 @@ optimizer_cmd="--optimizer adamw \
   --lr_num_cycles 1 \
   --beta1 0.9 \
   --beta2 0.95 \
-  --weight_decay 5e-5 \
+  --weight_decay 1e-4 \
   --epsilon 1e-8 \
   --max_grad_norm 1.0"
 
