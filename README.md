@@ -240,7 +240,7 @@ echo -ne "-------------------- Finished executing script --------------------\n\
 
 Assuming your LoRA is saved and pushed to the HF Hub, and named `my-awesome-name/my-awesome-lora`, we can now use the finetuned model for inference:
 
-```diff
+```py
 import torch
 from diffusers import HunyuanVideoPipeline
 
