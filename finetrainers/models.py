@@ -1,10 +1,12 @@
 from typing import Any, Dict
 
-from .ltx_video import LTX_VIDEO_T2V_CONFIG
+from .hunyuan_video import HUNYUAN_VIDEO_T2V_LORA_CONFIG
+from .ltx_video import LTX_VIDEO_T2V_LORA_CONFIG
 
 
 SUPPORTED_MODEL_CONFIGS = {
-    "ltx_video": LTX_VIDEO_T2V_CONFIG,
+    "hunyuan_video_lora": HUNYUAN_VIDEO_T2V_LORA_CONFIG,
+    "ltx_video_lora": LTX_VIDEO_T2V_LORA_CONFIG,
 }
 
 

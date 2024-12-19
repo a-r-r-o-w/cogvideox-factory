@@ -96,6 +96,8 @@ class Trainer:
 
         self.tokenizer = components.get("tokenizer", None)
         self.text_encoder = components.get("text_encoder", None)
+        self.tokenizer_2 = components.get("tokenizer_2", None)
+        self.text_encoder_2 = components.get("text_encoder_2", None)
         self.transformer = components.get("transformer", None)
         self.vae = components.get("vae", None)
         self.scheduler = components.get("scheduler", None)
@@ -130,6 +132,9 @@ class Trainer:
         self.transformer.requires_grad_(False)
         self.vae.requires_grad_(False)
 
+        if self.text_encoder_2 is not None:
+            self.text_encoder_2.requires_grad_(False)
+
         # For mixed precision training we cast all non-trainable weights (vae, text_encoder and transformer) to half-precision
         # as these weights are only used for inference, keeping weights in full precision is not required.
         weight_dtype = torch.float32
@@ -144,11 +149,14 @@ class Trainer:
                 "Mixed precision training with bfloat16 is not supported on MPS. Please use fp16 (recommended) or fp32 instead."
             )
 
-        # TODO(aryan): handle torch dtype from accelerator vs model dtype
+        # TODO(aryan): handle torch dtype from accelerator vs model dtype; refactor
         self.state.weight_dtype = weight_dtype
         self.text_encoder.to(self.state.accelerator.device, dtype=weight_dtype)
         self.transformer.to(self.state.accelerator.device, dtype=weight_dtype)
         self.vae.to(self.state.accelerator.device, dtype=weight_dtype)
+
+        if self.text_encoder_2 is not None:
+            self.text_encoder_2.to(self.state.accelerator.device, dtype=weight_dtype)
 
         if self.args.gradient_checkpointing:
             self.transformer.enable_gradient_checkpointing()
@@ -320,7 +328,6 @@ class Trainer:
         logger.info(f"Training configuration: {json.dumps(info, indent=4)}")
 
         # TODO(aryan): handle resume from checkpoint
-
         global_step = 0
         first_epoch = 0
         initial_global_step = 0
@@ -372,6 +379,8 @@ class Trainer:
                     other_conditions = self.model_config["prepare_conditions"](
                         tokenizer=self.tokenizer,
                         text_encoder=self.text_encoder,
+                        tokenizer_2=self.tokenizer_2,
+                        text_encoder_2=self.text_encoder_2,
                         prompt=prompts,
                         device=accelerator.device,
                         dtype=weight_dtype,
@@ -382,6 +391,10 @@ class Trainer:
                         if random.random() < self.args.caption_dropout_p:
                             other_conditions["prompt_embeds"].fill_(0)
                             other_conditions["prompt_attention_mask"].fill_(False)
+
+                            # TODO(aryan): refactor later
+                            if "pooled_prompt_embeds" in other_conditions:
+                                other_conditions["pooled_prompt_embeds"].fill_(0)
 
                     # These weighting schemes use a uniform timestep sampling and instead post-weight the loss
                     weights = compute_density_for_timestep_sampling(
@@ -527,6 +540,8 @@ class Trainer:
             cache_dir=self.args.cache_dir,
             tokenizer=self.tokenizer,
             text_encoder=self.text_encoder,
+            tokenizer_2=self.tokenizer_2,
+            text_encoder_2=self.text_encoder_2,
             transformer=unwrap_model(accelerator, self.transformer),
             vae=self.vae,
             device=accelerator.device,
