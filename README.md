@@ -40,13 +40,12 @@ export NCCL_P2P_DISABLE=1
 export TORCH_NCCL_ENABLE_MONITORING=0
 export FINETRAINERS_LOG_LEVEL=DEBUG
 
-# Modify this based on the number of GPUs available
 GPU_IDS="0,1"
 
-DATA_ROOT="/path/to/dataset/cakify"
+DATA_ROOT="/raid/aryan/video-dataset-disney"
 CAPTION_COLUMN="prompts.txt"
 VIDEO_COLUMN="videos.txt"
-OUTPUT_DIR="/path/to/output/directory/ltx-video/ltxv_cakify"
+OUTPUT_DIR="/path/to/output/directory/ltx-video/ltxv_disney"
 
 # Model arguments
 model_cmd="--model_name ltx_video \
@@ -84,8 +83,8 @@ training_cmd="--training_type lora \
 
 # Optimizer arguments
 optimizer_cmd="--optimizer adamw \
-  --lr 1e-5 \
-  --lr_scheduler constant \
+  --lr 3e-5 \
+  --lr_scheduler constant_with_warmup \
   --lr_warmup_steps 100 \
   --lr_num_cycles 1 \
   --beta1 0.9 \
@@ -95,7 +94,7 @@ optimizer_cmd="--optimizer adamw \
   --max_grad_norm 1.0"
 
 # Validation arguments
-validation_cmd="--validation_prompts \"BW_STYLE A black and white animated scene unfolds with an anthropomorphic goat surrounded by musical notes and symbols, suggesting a playful environment. Mickey Mouse appears, leaning forward in curiosity as the goat remains still. The goat then engages with Mickey, who bends down to converse or react. The dynamics shift as Mickey grabs the goat, potentially in surprise or playfulness, amidst a minimalistic background. The scene captures the evolving relationship between the two characters in a whimsical, animated setting, emphasizing their interactions and emotions@@@49x512x768:::BW_STYLE A black and white animated scene unfolds with an anthropomorphic goat surrounded by musical notes and symbols, suggesting a playful environment. Mickey Mouse appears, leaning forward in curiosity as the goat remains still. The goat then engages with Mickey, who bends down to converse or react. The dynamics shift as Mickey grabs the goat, potentially in surprise or playfulness, amidst a minimalistic background. The scene captures the evolving relationship between the two characters in a whimsical, animated setting, emphasizing their interactions and emotions@@@129x512x768:::BW_STYLE A panda, dressed in a small, red jacket and a tiny hat, sits on a wooden stool in a serene bamboo forest. The panda's fluffy paws strum a miniature acoustic guitar, producing soft, melodic tunes. Nearby, a few other pandas gather, watching curiously and some clapping in rhythm. Sunlight filters through the tall bamboo, casting a gentle glow on the scene. The panda's face is expressive, showing concentration and joy as it plays. The background includes a small, flowing stream and vibrant green foliage, enhancing the peaceful and magical atmosphere of this unique musical performance@@@49x512x768\" \
+validation_cmd="--validation_prompts \"afkx A black and white animated scene unfolds with an anthropomorphic goat surrounded by musical notes and symbols, suggesting a playful environment. Mickey Mouse appears, leaning forward in curiosity as the goat remains still. The goat then engages with Mickey, who bends down to converse or react. The dynamics shift as Mickey grabs the goat, potentially in surprise or playfulness, amidst a minimalistic background. The scene captures the evolving relationship between the two characters in a whimsical, animated setting, emphasizing their interactions and emotions.@@@49x512x768:::A woman with long brown hair and light skin smiles at another woman with long blonde hair. The woman with brown hair wears a black jacket and has a small, barely noticeable mole on her right cheek. The camera angle is a close-up, focused on the woman with brown hair's face. The lighting is warm and natural, likely from the setting sun, casting a soft glow on the scene. The scene appears to be real-life footage@@@49x512x768\" \
   --num_validation_videos 1 \
   --validation_steps 100"
 
@@ -200,7 +199,7 @@ training_cmd="--training_type lora \
 
 # Optimizer arguments
 optimizer_cmd="--optimizer adamw \
-  --lr 3e-5 \
+  --lr 2e-5 \
   --lr_scheduler constant_with_warmup \
   --lr_warmup_steps 100 \
   --lr_num_cycles 1 \
