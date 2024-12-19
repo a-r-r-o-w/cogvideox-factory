@@ -186,7 +186,7 @@ training_cmd="--training_type lora \
   --seed 42 \
   --mixed_precision bf16 \
   --batch_size 1 \
-  --train_steps 2000 \
+  --train_steps 1000 \
   --rank 128 \
   --lora_alpha 128 \
   --target_modules to_q to_k to_v to_out.0 \
@@ -215,7 +215,7 @@ validation_cmd="--validation_prompts \"afkx A baker carefully cuts a green bell 
   --validation_steps 100"
 
 # Miscellaneous arguments
-miscellaneous_cmd="--tracker_name finetrainers-ltxv \
+miscellaneous_cmd="--tracker_name finetrainers-hunyuan-video \
   --output_dir $OUTPUT_DIR \
   --nccl_timeout 1800 \
   --report_to wandb"
