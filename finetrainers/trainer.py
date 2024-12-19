@@ -78,7 +78,7 @@ class Trainer:
         self._init_directories_and_repositories()
 
         self.state.model_name = self.args.model_name
-        self.model_config = get_config_from_model_name(self.args.model_name)
+        self.model_config = get_config_from_model_name(self.args.model_name, self.args.training_type)
 
     def prepare_models(self) -> None:
         logger.info("Initializing models")
@@ -88,6 +88,7 @@ class Trainer:
             "text_encoder_dtype": torch.bfloat16,
             "transformer_dtype": torch.bfloat16,
             "vae_dtype": torch.bfloat16,
+            "revision": self.args.revision,
             "cache_dir": self.args.cache_dir,
         }
         if self.args.pretrained_model_name_or_path is not None:
@@ -101,6 +102,12 @@ class Trainer:
         self.transformer = components.get("transformer", None)
         self.vae = components.get("vae", None)
         self.scheduler = components.get("scheduler", None)
+
+        if self.vae is not None:
+            if self.args.enable_slicing:
+                self.vae.enable_slicing()
+            if self.args.enable_tiling:
+                self.vae.enable_tiling()
 
         self.transformer_config = self.transformer.config if self.transformer is not None else None
 
@@ -405,11 +412,7 @@ class Trainer:
                         mode_scale=self.args.flow_mode_scale,
                     )
                     indices = (weights * self.scheduler.config.num_train_timesteps).long()
-                    sigmas = scheduler_sigmas[indices].flatten()
-
-                    while sigmas.ndim < latent_conditions["latents"].ndim:
-                        sigmas = sigmas.unsqueeze(-1)
-
+                    sigmas = scheduler_sigmas[indices]
                     timesteps = (sigmas * 1000.0).long()
 
                     noise = torch.randn(
@@ -537,7 +540,6 @@ class Trainer:
 
         pipeline = self.model_config["initialize_pipeline"](
             model_id=self.args.pretrained_model_name_or_path,
-            cache_dir=self.args.cache_dir,
             tokenizer=self.tokenizer,
             text_encoder=self.text_encoder,
             tokenizer_2=self.tokenizer_2,
@@ -545,6 +547,8 @@ class Trainer:
             transformer=unwrap_model(accelerator, self.transformer),
             vae=self.vae,
             device=accelerator.device,
+            revision=self.args.revision,
+            cache_dir=self.args.cache_dir,
             enable_slicing=self.args.enable_slicing,
             enable_tiling=self.args.enable_tiling,
             enable_model_cpu_offload=self.args.enable_model_cpu_offload,

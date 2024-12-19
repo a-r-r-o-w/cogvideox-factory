@@ -3,9 +3,13 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from accelerate.logging import get_logger
-from diffusers import AutoencoderKLHunyuanVideo, FlowMatchEulerDiscreteScheduler, HunyuanVideoPipeline, HunyuanVideoTransformer3DModel
-from diffusers.utils import logging
-from transformers import CLIPTextModel, CLIPTokenizer, LlamaModel, LlamaTokenizer
+from diffusers import (
+    AutoencoderKLHunyuanVideo,
+    FlowMatchEulerDiscreteScheduler,
+    HunyuanVideoPipeline,
+    HunyuanVideoTransformer3DModel,
+)
+from transformers import AutoTokenizer, CLIPTextModel, CLIPTokenizer, LlamaModel, LlamaTokenizer
 from PIL import Image
 
 
@@ -18,20 +22,25 @@ def load_components(
     text_encoder_2_dtype: torch.dtype = torch.float16,
     transformer_dtype: torch.dtype = torch.bfloat16,
     vae_dtype: torch.dtype = torch.float16,
+    revision: Optional[str] = None,
     cache_dir: Optional[str] = None,
 ) -> Dict[str, nn.Module]:
-    tokenizer = LlamaTokenizer.from_pretrained(model_id, subfolder="tokenizer", cache_dir=cache_dir)
+    tokenizer = AutoTokenizer.from_pretrained(model_id, subfolder="tokenizer", revision=revision, cache_dir=cache_dir)
     text_encoder = LlamaModel.from_pretrained(
-        model_id, subfolder="text_encoder", torch_dtype=text_encoder_dtype, cache_dir=cache_dir
+        model_id, subfolder="text_encoder", torch_dtype=text_encoder_dtype, revision=revision, cache_dir=cache_dir
     )
-    tokenizer_2 = CLIPTokenizer.from_pretrained(model_id, subfolder="tokenizer_2", cache_dir=cache_dir)
+    tokenizer_2 = CLIPTokenizer.from_pretrained(
+        model_id, subfolder="tokenizer_2", revision=revision, cache_dir=cache_dir
+    )
     text_encoder_2 = CLIPTextModel.from_pretrained(
-        model_id, subfolder="text_encoder_2", torch_dtype=text_encoder_2_dtype, cache_dir=cache_dir
+        model_id, subfolder="text_encoder_2", torch_dtype=text_encoder_2_dtype, revision=revision, cache_dir=cache_dir
     )
     transformer = HunyuanVideoTransformer3DModel.from_pretrained(
-        model_id, subfolder="transformer", torch_dtype=transformer_dtype, cache_dir=cache_dir
+        model_id, subfolder="transformer", torch_dtype=transformer_dtype, revision=revision, cache_dir=cache_dir
     )
-    vae = AutoencoderKLHunyuanVideo.from_pretrained(model_id, subfolder="vae", torch_dtype=vae_dtype, cache_dir=cache_dir)
+    vae = AutoencoderKLHunyuanVideo.from_pretrained(
+        model_id, subfolder="vae", torch_dtype=vae_dtype, revision=revision, cache_dir=cache_dir
+    )
     scheduler = FlowMatchEulerDiscreteScheduler()
     return {
         "tokenizer": tokenizer,
@@ -58,6 +67,7 @@ def initialize_pipeline(
     vae: Optional[AutoencoderKLHunyuanVideo] = None,
     scheduler: Optional[FlowMatchEulerDiscreteScheduler] = None,
     device: Optional[torch.device] = None,
+    revision: Optional[str] = None,
     cache_dir: Optional[str] = None,
     enable_slicing: bool = False,
     enable_tiling: bool = False,
@@ -77,7 +87,7 @@ def initialize_pipeline(
         if component is not None:
             components[name] = component
 
-    pipe = HunyuanVideoPipeline.from_pretrained(model_id, **components, cache_dir=cache_dir)
+    pipe = HunyuanVideoPipeline.from_pretrained(model_id, **components, revision=revision, cache_dir=cache_dir)
     pipe.text_encoder = pipe.text_encoder.to(dtype=text_encoder_dtype)
     pipe.text_encoder_2 = pipe.text_encoder_2.to(dtype=text_encoder_2_dtype)
     pipe.transformer = pipe.transformer.to(dtype=transformer_dtype)
@@ -106,6 +116,19 @@ def prepare_conditions(
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
     max_sequence_length: int = 128,
+    # TODO(aryan): make configurable
+    prompt_template: Dict[str, Any] = {
+        "template": (
+            "<|start_header_id|>system<|end_header_id|>\n\nDescribe the video by detailing the following aspects: "
+            "1. The main content and theme of the video."
+            "2. The color, shape, size, texture, quantity, text, and spatial relationships of the objects."
+            "3. Actions, events, behaviors temporal relationships, physical movement changes of the objects."
+            "4. background environment, light, style and atmosphere."
+            "5. camera angles, movements, and transitions used in the video:<|eot_id|>"
+            "<|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|>"
+        ),
+        "crop_start": 95,
+    },
 ) -> torch.Tensor:
     device = device or text_encoder.device
     dtype = dtype or text_encoder.dtype
@@ -114,7 +137,9 @@ def prepare_conditions(
         prompt = [prompt]
 
     conditions = {}
-    conditions.update(_get_llama_prompt_embeds(tokenizer, text_encoder, prompt, device, dtype, max_sequence_length))
+    conditions.update(
+        _get_llama_prompt_embeds(tokenizer, text_encoder, prompt, prompt_template, device, dtype, max_sequence_length)
+    )
     conditions.update(_get_clip_prompt_embeds(tokenizer_2, text_encoder_2, prompt, device, dtype))
 
     guidance = torch.tensor([guidance], device=device, dtype=dtype) * 1000.0
@@ -138,10 +163,11 @@ def prepare_latents(
         image_or_video = image_or_video.unsqueeze(2)
     assert image_or_video.ndim == 5, f"Expected 5D tensor, got {image_or_video.ndim}D tensor"
 
-    image_or_video = image_or_video.to(device=device, dtype=dtype)
+    image_or_video = image_or_video.to(device=device, dtype=vae.dtype)
     image_or_video = image_or_video.permute(0, 2, 1, 3, 4).contiguous()  # [B, C, F, H, W] -> [B, F, C, H, W]
     latents = vae.encode(image_or_video).latent_dist.sample(generator=generator)
     latents = latents * vae.config.scaling_factor
+    latents = latents.to(dtype=dtype)
     return {"latents": latents}
 
 
@@ -274,7 +300,7 @@ def _get_clip_prompt_embeds(
         truncation=True,
         return_tensors="pt",
     )
-    
+
     prompt_embeds = text_encoder_2(text_inputs.input_ids.to(device), output_hidden_states=False).pooler_output
     prompt_embeds = prompt_embeds.to(dtype=dtype)
 

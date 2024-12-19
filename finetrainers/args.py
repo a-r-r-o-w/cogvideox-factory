@@ -206,7 +206,9 @@ def validate_args(args: Args):
 
 
 def _add_model_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--model_name", type=str, required=True, choices=["ltx_video"], help="Name of model to train.")
+    parser.add_argument(
+        "--model_name", type=str, required=True, choices=["hunyuan_video", "ltx_video"], help="Name of model to train."
+    )
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,

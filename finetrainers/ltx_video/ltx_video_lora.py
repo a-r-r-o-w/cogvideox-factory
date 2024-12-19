@@ -17,16 +17,19 @@ def load_components(
     text_encoder_dtype: torch.dtype = torch.bfloat16,
     transformer_dtype: torch.dtype = torch.bfloat16,
     vae_dtype: torch.dtype = torch.bfloat16,
+    revision: Optional[str] = None,
     cache_dir: Optional[str] = None,
 ) -> Dict[str, nn.Module]:
-    tokenizer = T5Tokenizer.from_pretrained(model_id, subfolder="tokenizer", cache_dir=cache_dir)
+    tokenizer = T5Tokenizer.from_pretrained(model_id, subfolder="tokenizer", revision=revision, cache_dir=cache_dir)
     text_encoder = T5EncoderModel.from_pretrained(
-        model_id, subfolder="text_encoder", torch_dtype=text_encoder_dtype, cache_dir=cache_dir
+        model_id, subfolder="text_encoder", torch_dtype=text_encoder_dtype, revision=revision, cache_dir=cache_dir
     )
     transformer = LTXVideoTransformer3DModel.from_pretrained(
-        model_id, subfolder="transformer", torch_dtype=transformer_dtype, cache_dir=cache_dir
+        model_id, subfolder="transformer", torch_dtype=transformer_dtype, revision=revision, cache_dir=cache_dir
     )
-    vae = AutoencoderKLLTXVideo.from_pretrained(model_id, subfolder="vae", torch_dtype=vae_dtype, cache_dir=cache_dir)
+    vae = AutoencoderKLLTXVideo.from_pretrained(
+        model_id, subfolder="vae", torch_dtype=vae_dtype, revision=revision, cache_dir=cache_dir
+    )
     scheduler = FlowMatchEulerDiscreteScheduler()
     return {
         "tokenizer": tokenizer,
@@ -48,6 +51,7 @@ def initialize_pipeline(
     vae: Optional[AutoencoderKLLTXVideo] = None,
     scheduler: Optional[FlowMatchEulerDiscreteScheduler] = None,
     device: Optional[torch.device] = None,
+    revision: Optional[str] = None,
     cache_dir: Optional[str] = None,
     enable_slicing: bool = False,
     enable_tiling: bool = False,
@@ -66,7 +70,7 @@ def initialize_pipeline(
         if component is not None:
             components[name] = component
 
-    pipe = LTXPipeline.from_pretrained(model_id, **components, cache_dir=cache_dir)
+    pipe = LTXPipeline.from_pretrained(model_id, **components, revision=revision, cache_dir=cache_dir)
     pipe.text_encoder = pipe.text_encoder.to(dtype=text_encoder_dtype)
     pipe.transformer = pipe.transformer.to(dtype=transformer_dtype)
     pipe.vae = pipe.vae.to(dtype=vae_dtype)
