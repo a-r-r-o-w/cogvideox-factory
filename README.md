@@ -143,6 +143,57 @@ video = pipe("<my-awesome-prompt>").frames[0]
 export_to_video(video, "output.mp4", fps=8)
 ```
 
+### Memory Usage
+
+LoRA with rank 128, batch size 1, gradient checkpointing, optimizer adamw, `49x512x768` resolution, **without precomputation**:
+
+```
+Memory before training start: {
+    "memory_allocated": 13.486,
+    "memory_reserved": 13.879,
+    "max_memory_allocated": 13.486,
+    "max_memory_reserved": 13.879
+}
+Training configuration: {
+    "trainable parameters": 117440512,
+    "total samples": 69,
+    "train epochs": 1,
+    "train steps": 10,
+    "batches per device": 1,
+    "total batches observed per epoch": 69,
+    "train batch size": 1,
+    "gradient accumulation steps": 1
+}
+Memory before validation start: {
+    "memory_allocated": 14.146,
+    "memory_reserved": 16.809,
+    "max_memory_allocated": 15.527,
+    "max_memory_reserved": 17.623
+}
+Memory after validation end: {
+    "memory_allocated": 14.146,
+    "memory_reserved": 14.627,
+    "max_memory_allocated": 15.527,
+    "max_memory_reserved": 17.623
+}
+Memory after epoch 1: {
+    "memory_allocated": 14.146,
+    "memory_reserved": 14.627,
+    "max_memory_allocated": 15.527,
+    "max_memory_reserved": 17.623
+}
+Memory after training end: {
+    "memory_allocated": 4.461,
+    "memory_reserved": 5.014,
+    "max_memory_allocated": 15.527,
+    "max_memory_reserved": 17.623
+}
+```
+
+LoRA with rank 128, batch size 1, gradient checkpointing, optimizer adamw, `49x512x768` resolution, **with precomputation**:
+
+TODO
+
 </details>
 
 <details>
