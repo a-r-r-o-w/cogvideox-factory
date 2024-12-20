@@ -10,6 +10,11 @@ FineTrainers is a work-in-progress library to support training of video models. 
 </tr>
 </table>
 
+## News
+
+- 🔥 **2024-12-20**: Support for LoRA finetuning of [Hunyuan Video](https://huggingface.co/tencent/HunyuanVideo) added!
+- 🔥 **2024-12-18**: Support for LoRA finetuning of [LTX Video](https://huggingface.co/Lightricks/LTX-Video) added!
+
 ## Quickstart
 
 Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt` and install diffusers from source by `pip install git+https://github.com/huggingface/diffusers`.
