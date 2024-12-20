@@ -1,3 +1,9 @@
+import os
+import sys
+
+base_repo_path = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+sys.path.append(os.path.join(base_repo_path, "finetrainers"))
+
 import inspect
 import json
 import logging
@@ -24,17 +30,17 @@ from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params
 from diffusers.utils import export_to_video, load_image, load_video
 from huggingface_hub import create_repo
-from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dict
+from peft import get_peft_model_state_dict, set_peft_model_state_dict
 from tqdm import tqdm
 
-from .args import Args, validate_args
-from .constants import FINETRAINERS_LOG_LEVEL
-from .models import get_config_from_model_name
-from .state import State
-from .utils.file_utils import find_files, delete_files, string_to_filename
-from .utils.optimizer_utils import get_optimizer
-from .utils.memory_utils import get_memory_statistics, free_memory
-from .utils.torch_utils import unwrap_model
+from finetrainers.args import Args, validate_args
+from finetrainers.constants import FINETRAINERS_LOG_LEVEL
+from finetrainers.models import get_config_from_model_name
+from finetrainers.state import State
+from finetrainers.utils.file_utils import find_files, delete_files, string_to_filename
+from finetrainers.utils.optimizer_utils import get_optimizer
+from finetrainers.utils.memory_utils import get_memory_statistics, free_memory
+from finetrainers.utils.torch_utils import unwrap_model
 
 
 logger = get_logger("finetrainers")
@@ -219,7 +225,7 @@ class Trainer:
         tracker_name = self.args.tracker_name or "finetrainers-experiment"
         self.state.accelerator.init_trackers(tracker_name, config=self.args.to_dict())
 
-    def calculate_loss(self):
+    def calculate_loss(self, **kwargs):
         raise NotImplementedError
     
     def run_forward_pass_and_calculate_preds(self, **kwargs):
@@ -350,7 +356,7 @@ class Trainer:
                         generator=generator, 
                         scheduler_sigmas=scheduler_sigmas
                     )
-                    weights = self.calculate_loss_weights(sigmas=scheduler_sigmas)
+                    weights = self.calculate_loss_weights(sigmas=forward_out.sigmas)
                     loss = self.calculate_loss(weights, forward_out.preds, forward_out.targets)
                     accelerator.backward(loss)
 

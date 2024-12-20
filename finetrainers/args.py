@@ -1,8 +1,15 @@
+
+import os
+import sys
+
+base_repo_path = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+sys.path.append(os.path.join(base_repo_path, "finetrainers"))
+
 import argparse
 from typing import Any, Dict, List, Optional, Tuple
 
-from .constants import DEFAULT_IMAGE_RESOLUTION_BUCKETS, DEFAULT_VIDEO_RESOLUTION_BUCKETS
-from .models import SUPPORTED_MODEL_CONFIGS
+from finetrainers.constants import DEFAULT_IMAGE_RESOLUTION_BUCKETS, DEFAULT_VIDEO_RESOLUTION_BUCKETS
+from finetrainers.models import SUPPORTED_MODEL_CONFIGS
 
 
 class Args:

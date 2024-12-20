@@ -1,8 +1,14 @@
-from ..trainer import Trainer
-from ..constants import FINETRAINERS_LOG_LEVEL
-from ..dataset import BucketSampler, VideoDatasetWithResizing
+import os
+import sys
+
+base_repo_path = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+sys.path.append(os.path.join(base_repo_path, "finetrainers"))
+
+from trainer import Trainer
+from constants import FINETRAINERS_LOG_LEVEL
+from dataset import BucketSampler, VideoDatasetWithResizing
 from dataclasses import dataclass
-from ..utils.memory_utils import make_contiguous
+from utils.memory_utils import make_contiguous
 from accelerate.logging import get_logger
 from diffusers.training_utils import compute_density_for_timestep_sampling, compute_loss_weighting_for_sd3
 import random
@@ -17,6 +23,7 @@ logger.setLevel(FINETRAINERS_LOG_LEVEL)
 class LTXTrainingOutput:
     preds: torch.Tensor 
     targets: torch.Tensor
+    sigmas: torch.Tensor
 
 
 class LTXTrainer(Trainer):
@@ -177,12 +184,20 @@ class LTXTrainer(Trainer):
         if not return_dict:
             return pred, target
 
-        return LTXTrainingOutput(preds=pred, targets=target)
+        return LTXTrainingOutput(preds=pred, targets=target, sigmas=sigmas)
     
     def calculate_loss_weights(self, sigmas):
         weights = compute_loss_weighting_for_sd3(
             weighting_scheme=self.args.flow_weighting_scheme, sigmas=sigmas
         )
         return weights
+
+    def calculate_loss(self, weights, preds, targets):
+        loss = weights.float() * (preds["latents"].float() - targets.float()).pow(2)
+        # Average loss across channel dimension
+        loss = loss.mean(list(range(1, loss.ndim)))
+        # Average loss across batch dimension
+        loss = loss.mean()
+        return loss
 
         
