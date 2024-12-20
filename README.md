@@ -12,7 +12,7 @@ FineTrainers is a work-in-progress library to support training of video models. 
 
 ## News
 
-- 🔥 **2024-12-20**: Support for LoRA finetuning of [Hunyuan Video](https://huggingface.co/tencent/HunyuanVideo) added!
+- 🔥 **2024-12-20**: Support for LoRA finetuning of [Hunyuan Video](https://huggingface.co/tencent/HunyuanVideo) added! We would like to thank @SHYuanBest for his work on a training script [here](https://github.com/huggingface/diffusers/pull/10254).
 - 🔥 **2024-12-18**: Support for LoRA finetuning of [LTX Video](https://huggingface.co/Lightricks/LTX-Video) added!
 
 ## Quickstart
