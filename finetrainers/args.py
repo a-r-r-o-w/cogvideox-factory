@@ -1,7 +1,15 @@
+
+import os
+import sys
+
+base_repo_path = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+sys.path.append(os.path.join(base_repo_path, "finetrainers"))
+
 import argparse
 from typing import Any, Dict, List, Optional, Tuple
 
-from .constants import DEFAULT_IMAGE_RESOLUTION_BUCKETS, DEFAULT_VIDEO_RESOLUTION_BUCKETS
+from finetrainers.constants import DEFAULT_IMAGE_RESOLUTION_BUCKETS, DEFAULT_VIDEO_RESOLUTION_BUCKETS
+from finetrainers.models import SUPPORTED_MODEL_CONFIGS
 
 
 class Args:
@@ -207,7 +215,7 @@ def validate_args(args: Args):
 
 def _add_model_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--model_name", type=str, required=True, choices=["hunyuan_video", "ltx_video"], help="Name of model to train."
+        "--model_name", type=str, required=True, choices=list(SUPPORTED_MODEL_CONFIGS.keys()), help="Name of model to train."
     )
     parser.add_argument(
         "--pretrained_model_name_or_path",

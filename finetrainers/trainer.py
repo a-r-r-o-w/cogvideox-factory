@@ -1,12 +1,15 @@
+import os
+import sys
+
+base_repo_path = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+sys.path.append(os.path.join(base_repo_path, "finetrainers"))
+
 import inspect
 import json
 import logging
 import math
 import os
-import random
-import shutil
 from datetime import timedelta
-from typing import Any, Dict
 from pathlib import Path
 
 import diffusers
@@ -24,25 +27,20 @@ from accelerate.utils import (
     gather_object,
 )
 from diffusers.optimization import get_scheduler
-from diffusers.training_utils import (
-    cast_training_params,
-    compute_density_for_timestep_sampling,
-    compute_loss_weighting_for_sd3,
-)
+from diffusers.training_utils import cast_training_params
 from diffusers.utils import export_to_video, load_image, load_video
-from huggingface_hub import create_repo, upload_folder
-from peft import LoraConfig, get_peft_model_state_dict, set_peft_model_state_dict
+from huggingface_hub import create_repo
+from peft import get_peft_model_state_dict, set_peft_model_state_dict
 from tqdm import tqdm
 
-from .args import Args, validate_args
-from .constants import FINETRAINERS_LOG_LEVEL
-from .dataset import BucketSampler, VideoDatasetWithResizing
-from .models import get_config_from_model_name
-from .state import State
-from .utils.file_utils import find_files, delete_files, string_to_filename
-from .utils.optimizer_utils import get_optimizer, gradient_norm
-from .utils.memory_utils import get_memory_statistics, free_memory, make_contiguous
-from .utils.torch_utils import unwrap_model
+from finetrainers.args import Args, validate_args
+from finetrainers.constants import FINETRAINERS_LOG_LEVEL
+from finetrainers.models import get_config_from_model_name
+from finetrainers.state import State
+from finetrainers.utils.file_utils import find_files, delete_files, string_to_filename
+from finetrainers.utils.optimizer_utils import get_optimizer
+from finetrainers.utils.memory_utils import get_memory_statistics, free_memory
+from finetrainers.utils.torch_utils import unwrap_model
 
 
 logger = get_logger("finetrainers")
@@ -81,162 +79,76 @@ class Trainer:
         self.model_config = get_config_from_model_name(self.args.model_name, self.args.training_type)
 
     def prepare_models(self) -> None:
-        logger.info("Initializing models")
-
-        # TODO(aryan): refactor in future
-        load_components_kwargs = {
-            "text_encoder_dtype": torch.bfloat16,
-            "transformer_dtype": torch.bfloat16,
-            "vae_dtype": torch.bfloat16,
-            "revision": self.args.revision,
-            "cache_dir": self.args.cache_dir,
-        }
-        if self.args.pretrained_model_name_or_path is not None:
-            load_components_kwargs["model_id"] = self.args.pretrained_model_name_or_path
-        components = self._model_config_call(self.model_config["load_components"], load_components_kwargs)
-
-        self.tokenizer = components.get("tokenizer", None)
-        self.text_encoder = components.get("text_encoder", None)
-        self.tokenizer_2 = components.get("tokenizer_2", None)
-        self.text_encoder_2 = components.get("text_encoder_2", None)
-        self.transformer = components.get("transformer", None)
-        self.vae = components.get("vae", None)
-        self.scheduler = components.get("scheduler", None)
-
-        if self.vae is not None:
-            if self.args.enable_slicing:
-                self.vae.enable_slicing()
-            if self.args.enable_tiling:
-                self.vae.enable_tiling()
-
-        self.transformer_config = self.transformer.config if self.transformer is not None else None
+        raise NotImplementedError
 
     def prepare_dataset(self) -> None:
-        logger.info("Initializing dataset and dataloader")
-
-        self.dataset = VideoDatasetWithResizing(
-            data_root=self.args.data_root,
-            caption_column=self.args.caption_column,
-            video_column=self.args.video_column,
-            resolution_buckets=self.args.video_resolution_buckets,
-            dataset_file=self.args.dataset_file,
-            id_token=self.args.id_token,
-        )
-        self.dataloader = torch.utils.data.DataLoader(
-            self.dataset,
-            batch_size=1,
-            sampler=BucketSampler(self.dataset, batch_size=self.args.batch_size, shuffle=True),
-            collate_fn=self.model_config.get("collate_fn"),
-            num_workers=self.args.dataloader_num_workers,
-            pin_memory=self.args.pin_memory,
-        )
+        raise NotImplementedError
 
     def prepare_trainable_parameters(self) -> None:
-        logger.info("Initializing trainable parameters")
+        raise NotImplementedError
 
-        # TODO(aryan): refactor later. for now only lora is supported
-        self.text_encoder.requires_grad_(False)
-        self.transformer.requires_grad_(False)
-        self.vae.requires_grad_(False)
+    # TODO: DeepSpeed support
+    def save_model_hook(self, models, weights, output_dir):
+        if self.state.accelerator.is_main_process:
+            transformer_lora_layers_to_save = None
 
-        if self.text_encoder_2 is not None:
-            self.text_encoder_2.requires_grad_(False)
+            for model in models:
+                if isinstance(
+                    unwrap_model(self.state.accelerator, model),
+                    type(unwrap_model(self.state.accelerator, self.transformer)),
+                ):
+                    model = unwrap_model(self.state.accelerator, model)
+                    transformer_lora_layers_to_save = get_peft_model_state_dict(model)
+                else:
+                    raise ValueError(f"Unexpected save model: {model.__class__}")
 
-        # For mixed precision training we cast all non-trainable weights (vae, text_encoder and transformer) to half-precision
-        # as these weights are only used for inference, keeping weights in full precision is not required.
-        weight_dtype = torch.float32
-        if self.state.accelerator.mixed_precision == "fp16":
-            weight_dtype = torch.float16
-        elif self.state.accelerator.mixed_precision == "bf16":
-            weight_dtype = torch.bfloat16
+                # make sure to pop weight so that corresponding model is not saved again
+                if weights:
+                    weights.pop()
 
-        if torch.backends.mps.is_available() and weight_dtype == torch.bfloat16:
-            # due to pytorch#99272, MPS does not yet support bfloat16.
-            raise ValueError(
-                "Mixed precision training with bfloat16 is not supported on MPS. Please use fp16 (recommended) or fp32 instead."
+            self.model_config["pipeline_cls"].save_lora_weights(
+                output_dir,
+                transformer_lora_layers=transformer_lora_layers_to_save,
             )
 
-        # TODO(aryan): handle torch dtype from accelerator vs model dtype; refactor
-        self.state.weight_dtype = weight_dtype
-        self.text_encoder.to(self.state.accelerator.device, dtype=weight_dtype)
-        self.transformer.to(self.state.accelerator.device, dtype=weight_dtype)
-        self.vae.to(self.state.accelerator.device, dtype=weight_dtype)
-
-        if self.text_encoder_2 is not None:
-            self.text_encoder_2.to(self.state.accelerator.device, dtype=weight_dtype)
-
-        if self.args.gradient_checkpointing:
-            self.transformer.enable_gradient_checkpointing()
-
-        transformer_lora_config = LoraConfig(
-            r=self.args.rank,
-            lora_alpha=self.args.lora_alpha,
-            init_lora_weights=True,
-            target_modules=self.args.target_modules,
+    # TODO: Only `transformer` for now. DeepSpeed support.
+    def load_model_hook(self, models, input_dir):
+        if not hasattr(self, "transformer_lora_config"):
+            raise ValueError("Need `transformer_lora_config`.")
+        
+        transformer_lora_config = getattr(self, "transformer_lora_config")
+        transformer_ = self.model_config["pipeline_cls"].from_pretrained(
+            self.args.pretrained_model_name_or_path, subfolder="transformer"
         )
-        self.transformer.add_adapter(transformer_lora_config)
+        transformer_.add_adapter(transformer_lora_config)
 
-        # TODO: refactor
-        # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-        def save_model_hook(models, weights, output_dir):
-            if self.state.accelerator.is_main_process:
-                transformer_lora_layers_to_save = None
+        lora_state_dict = self.model_config["pipeline_cls"].lora_state_dict(input_dir)
 
-                for model in models:
-                    if isinstance(
-                        unwrap_model(self.state.accelerator, model),
-                        type(unwrap_model(self.state.accelerator, self.transformer)),
-                    ):
-                        model = unwrap_model(self.state.accelerator, model)
-                        transformer_lora_layers_to_save = get_peft_model_state_dict(model)
-                    else:
-                        raise ValueError(f"Unexpected save model: {model.__class__}")
-
-                    # make sure to pop weight so that corresponding model is not saved again
-                    if weights:
-                        weights.pop()
-
-                self.model_config["pipeline_cls"].save_lora_weights(
-                    output_dir,
-                    transformer_lora_layers=transformer_lora_layers_to_save,
+        transformer_state_dict = {
+            f'{k.replace("transformer.", "")}': v
+            for k, v in lora_state_dict.items()
+            if k.startswith("transformer.")
+        }
+        incompatible_keys = set_peft_model_state_dict(transformer_, transformer_state_dict, adapter_name="default")
+        if incompatible_keys is not None:
+            # check only for unexpected keys
+            unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
+            if unexpected_keys:
+                logger.warning(
+                    f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
+                    f" {unexpected_keys}. "
                 )
 
-        def load_model_hook(models, input_dir):
-            transformer_ = self.model_config["pipeline_cls"].from_pretrained(
-                self.args.pretrained_model_name_or_path, subfolder="transformer"
-            )
-            transformer_.add_adapter(transformer_lora_config)
+        # Make sure the trainable params are in float32. This is again needed since the base models
+        # are in `weight_dtype`. More details:
+        # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
+        if self.args.mixed_precision == "fp16":
+            # only upcast trainable parameters (LoRA) into fp32
+            cast_training_params([transformer_])
 
-            lora_state_dict = self.model_config["pipeline_cls"].lora_state_dict(input_dir)
-
-            transformer_state_dict = {
-                f'{k.replace("transformer.", "")}': v
-                for k, v in lora_state_dict.items()
-                if k.startswith("transformer.")
-            }
-            incompatible_keys = set_peft_model_state_dict(transformer_, transformer_state_dict, adapter_name="default")
-            if incompatible_keys is not None:
-                # check only for unexpected keys
-                unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-                if unexpected_keys:
-                    logger.warning(
-                        f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
-                        f" {unexpected_keys}. "
-                    )
-
-            # Make sure the trainable params are in float32. This is again needed since the base models
-            # are in `weight_dtype`. More details:
-            # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
-            if self.args.mixed_precision == "fp16":
-                # only upcast trainable parameters (LoRA) into fp32
-                cast_training_params([transformer_])
-
-        self.state.accelerator.register_save_state_pre_hook(save_model_hook)
-        self.state.accelerator.register_load_state_pre_hook(load_model_hook)
-
-        # Enable TF32 for faster training on Ampere GPUs: https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-        if self.args.allow_tf32 and torch.cuda.is_available():
-            torch.backends.cuda.matmul.allow_tf32 = True
+    def register_save_load_hooks(self):    
+        self.state.accelerator.register_save_state_pre_hook(self.save_model_hook)
+        self.state.accelerator.register_load_state_pre_hook(self.load_model_hook)
 
     def prepare_optimizer(self) -> None:
         logger.info("Initializing optimizer and lr scheduler")
@@ -313,6 +225,77 @@ class Trainer:
         tracker_name = self.args.tracker_name or "finetrainers-experiment"
         self.state.accelerator.init_trackers(tracker_name, config=self.args.to_dict())
 
+    def calculate_loss(self, **kwargs):
+        raise NotImplementedError
+    
+    def run_forward_pass_and_calculate_preds(self, **kwargs):
+        raise NotImplementedError
+    
+    def calculate_loss_weights(self, **kwargs):
+        raise NotImplementedError
+    
+    def sort_out_checkpoint_to_resume_from(self, accelerator):
+        if self.args.resume_from_checkpoint != "latest":
+            path = os.path.basename(self.args.resume_from_checkpoint)
+        else:
+            # Get the most recent checkpoint
+            dirs = os.listdir(self.args.output_dir)
+            dirs = [d for d in dirs if d.startswith("checkpoint")]
+            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+            path = dirs[-1] if len(dirs) > 0 else None
+
+        if path is None:
+            accelerator.print(
+                f"Checkpoint '{self.args.resume_from_checkpoint}' does not exist. Starting a new training run."
+            )
+            self.args.resume_from_checkpoint = None
+            initial_global_step = 0
+        else:
+            num_update_steps_per_epoch = math.ceil(len(self.dataloader) / self.args.gradient_accumulation_steps)
+            accelerator.print(f"Resuming from checkpoint {path}")
+            accelerator.load_state(os.path.join(self.args.output_dir, path))
+            global_step = int(path.split("-")[1])
+
+            initial_global_step = global_step
+            first_epoch = global_step // num_update_steps_per_epoch
+
+        return initial_global_step, global_step, first_epoch
+    
+    def save_intermediate_checkpoint(self, step, accelerator):
+        if step % self.args.checkpointing_steps == 0:
+            # before saving state, check if this save would set us over the `checkpointing_limit`
+            if self.args.checkpointing_limit is not None:
+                checkpoints = find_files(self.args.output_dir, prefix="checkpoint")
+
+                # before we save the new checkpoint, we need to have at_most `checkpoints_total_limit - 1` checkpoints
+                if len(checkpoints) >= self.args.checkpointing_limit:
+                    num_to_remove = len(checkpoints) - self.args.checkpointing_limit + 1
+                    checkpoints_to_remove = checkpoints[0:num_to_remove]
+                    delete_files(checkpoints_to_remove)
+
+            logger.info(f"Checkpointing at step {step}")
+            save_path = os.path.join(self.args.output_dir, f"checkpoint-{step}")
+            accelerator.save_state(save_path)
+            logger.info(f"Saved state to {save_path}")
+
+    def save_final_checkpoint(self, accelerator):
+        self.transformer = unwrap_model(accelerator, self.transformer)
+        dtype = (
+            torch.float16
+            if self.args.mixed_precision == "fp16"
+            else torch.bfloat16
+            if self.args.mixed_precision == "bf16"
+            else torch.float32
+        )
+        self.transformer = self.transformer.to(dtype)
+        transformer_lora_layers = get_peft_model_state_dict(self.transformer)
+
+        self.model_config["pipeline_cls"].save_lora_weights(
+            save_directory=self.args.output_dir,
+            transformer_lora_layers=transformer_lora_layers,
+        )
+        logger.info(f"Checkpoint saved to {self.args.output_dir}.")
+
     def train(self) -> None:
         logger.info("Starting training")
 
@@ -334,10 +317,13 @@ class Trainer:
         }
         logger.info(f"Training configuration: {json.dumps(info, indent=4)}")
 
-        # TODO(aryan): handle resume from checkpoint
-        global_step = 0
-        first_epoch = 0
-        initial_global_step = 0
+        if not self.args.resume_from_checkpoint:
+            initial_global_step = 0
+            global_step = 0
+            first_epoch = 0
+        else:
+            initial_global_step, global_step, first_epoch = self.sort_out_checkpoint_to_resume_from(accelerator=accelerator)
+
         progress_bar = tqdm(
             range(0, self.state.train_steps),
             initial=initial_global_step,
@@ -346,12 +332,11 @@ class Trainer:
         )
 
         accelerator = self.state.accelerator
-        weight_dtype = self.state.weight_dtype
-        scheduler_sigmas = self.scheduler.sigmas.clone().to(device=accelerator.device, dtype=weight_dtype)
         generator = torch.Generator(device=accelerator.device)
         if self.args.seed is not None:
             generator = generator.manual_seed(self.args.seed)
         self.state.generator = generator
+        scheduler_sigmas = self.scheduler.sigmas.clone().to(device=accelerator.device, dtype=self.state.weight_dtype)
 
         for epoch in range(first_epoch, self.state.train_epochs):
             logger.debug(f"Starting epoch ({epoch + 1}/{self.state.train_epochs})")
@@ -364,82 +349,15 @@ class Trainer:
                 logs = {}
 
                 with accelerator.accumulate(models_to_accumulate):
-                    videos = batch["videos"]
-                    prompts = batch["prompts"]
-                    batch_size = len(prompts)
-
-                    if self.args.caption_dropout_technique == "empty":
-                        if random.random() < self.args.caption_dropout_p:
-                            prompts = [""] * batch_size
-
-                    latent_conditions = self.model_config["prepare_latents"](
-                        vae=self.vae,
-                        image_or_video=videos,
-                        patch_size=self.transformer_config.patch_size,
-                        patch_size_t=self.transformer_config.patch_size_t,
-                        device=accelerator.device,
-                        dtype=weight_dtype,
-                        generator=generator,
+                    forward_out = self.run_forward_pass_and_calculate_preds(
+                        batch, 
+                        accelerator, 
+                        weight_dtype=self.state.weight_dtype, 
+                        generator=generator, 
+                        scheduler_sigmas=scheduler_sigmas
                     )
-                    latent_conditions = make_contiguous(latent_conditions)
-
-                    other_conditions = self.model_config["prepare_conditions"](
-                        tokenizer=self.tokenizer,
-                        text_encoder=self.text_encoder,
-                        tokenizer_2=self.tokenizer_2,
-                        text_encoder_2=self.text_encoder_2,
-                        prompt=prompts,
-                        device=accelerator.device,
-                        dtype=weight_dtype,
-                    )
-                    other_conditions = make_contiguous(other_conditions)
-
-                    if self.args.caption_dropout_technique == "zero":
-                        if random.random() < self.args.caption_dropout_p:
-                            other_conditions["prompt_embeds"].fill_(0)
-                            other_conditions["prompt_attention_mask"].fill_(False)
-
-                            # TODO(aryan): refactor later
-                            if "pooled_prompt_embeds" in other_conditions:
-                                other_conditions["pooled_prompt_embeds"].fill_(0)
-
-                    # These weighting schemes use a uniform timestep sampling and instead post-weight the loss
-                    weights = compute_density_for_timestep_sampling(
-                        weighting_scheme=self.args.flow_weighting_scheme,
-                        batch_size=batch_size,
-                        logit_mean=self.args.flow_logit_mean,
-                        logit_std=self.args.flow_logit_std,
-                        mode_scale=self.args.flow_mode_scale,
-                    )
-                    indices = (weights * self.scheduler.config.num_train_timesteps).long()
-                    sigmas = scheduler_sigmas[indices]
-                    timesteps = (sigmas * 1000.0).long()
-
-                    noise = torch.randn(
-                        latent_conditions["latents"].shape,
-                        generator=generator,
-                        device=accelerator.device,
-                        dtype=weight_dtype,
-                    )
-                    noisy_latents = (1.0 - sigmas) * latent_conditions["latents"] + sigmas * noise
-
-                    latent_conditions.update({"noisy_latents": noisy_latents})
-                    other_conditions.update({"timesteps": timesteps})
-
-                    # These weighting schemes use a uniform timestep sampling and instead post-weight the loss
-                    weights = compute_loss_weighting_for_sd3(
-                        weighting_scheme=self.args.flow_weighting_scheme, sigmas=sigmas
-                    )
-                    pred = self.model_config["forward_pass"](
-                        transformer=self.transformer, **latent_conditions, **other_conditions
-                    )
-                    target = noise - latent_conditions["latents"]
-
-                    loss = weights.float() * (pred["latents"].float() - target.float()).pow(2)
-                    # Average loss across channel dimension
-                    loss = loss.mean(list(range(1, loss.ndim)))
-                    # Average loss across batch dimension
-                    loss = loss.mean()
+                    weights = self.calculate_loss_weights(sigmas=forward_out.sigmas)
+                    loss = self.calculate_loss(weights, forward_out.preds, forward_out.targets)
                     accelerator.backward(loss)
 
                     if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
@@ -454,23 +372,9 @@ class Trainer:
                     progress_bar.update(1)
                     global_step += 1
 
-                    # Checkpointing
-                    if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
-                        if global_step % self.args.checkpointing_steps == 0:
-                            # before saving state, check if this save would set us over the `checkpointing_limit`
-                            if self.args.checkpointing_limit is not None:
-                                checkpoints = find_files(self.args.output_dir, prefix="checkpoint")
-
-                                # before we save the new checkpoint, we need to have at_most `checkpoints_total_limit - 1` checkpoints
-                                if len(checkpoints) >= self.args.checkpointing_limit:
-                                    num_to_remove = len(checkpoints) - self.args.checkpointing_limit + 1
-                                    checkpoints_to_remove = checkpoints[0:num_to_remove]
-                                    delete_files(checkpoints_to_remove)
-
-                            logger.info(f"Checkpointing at step {global_step}")
-                            save_path = os.path.join(self.args.output_dir, f"checkpoint-{global_step}")
-                            accelerator.save_state(save_path)
-                            logger.info(f"Saved state to {save_path}")
+                # Checkpointing
+                if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
+                    self.save_intermediate_checkpoint(step=global_step, accelerator=accelerator)
 
                 # Maybe run validation
                 should_run_validation = (
@@ -480,6 +384,7 @@ class Trainer:
                 if should_run_validation:
                     self.validate(global_step)
 
+                # Log stuff to tracker.
                 logs = {"loss": loss.detach().item(), "lr": self.lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(logs)
                 accelerator.log(logs, step=global_step)
@@ -500,27 +405,12 @@ class Trainer:
 
         accelerator.wait_for_everyone()
         if accelerator.is_main_process:
-            self.transformer = unwrap_model(accelerator, self.transformer)
-            dtype = (
-                torch.float16
-                if self.args.mixed_precision == "fp16"
-                else torch.bfloat16
-                if self.args.mixed_precision == "bf16"
-                else torch.float32
-            )
-            self.transformer = self.transformer.to(dtype)
-            transformer_lora_layers = get_peft_model_state_dict(self.transformer)
-
-            self.model_config["pipeline_cls"].save_lora_weights(
-                save_directory=self.args.output_dir,
-                transformer_lora_layers=transformer_lora_layers,
-            )
+            self.save_final_checkpoint(accelerator=accelerator)
 
         del self.tokenizer, self.text_encoder, self.transformer, self.vae, self.scheduler
         free_memory()
         memory_statistics = get_memory_statistics()
         logger.info(f"Memory after training end: {json.dumps(memory_statistics, indent=4)}")
-
         accelerator.end_training()
 
     def validate(self, step: int) -> None:
@@ -635,8 +525,7 @@ class Trainer:
         self.transformer.train()
 
     def evaluate(self) -> None:
-        logger.info("Starting evaluation")
-        # TODO: implement metrics for evaluation
+        raise NotImplementedError
 
     def _init_distributed(self) -> None:
         logging_dir = Path(self.args.output_dir, self.args.logging_dir)
@@ -665,6 +554,10 @@ class Trainer:
         if self.args.seed is not None:
             self.state.seed = self.args.seed
             set_seed(self.args.seed)
+
+        # Enable TF32 for faster training on Ampere GPUs: https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
+        if self.args.allow_tf32 and torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = True
 
     def _init_logging(self) -> None:
         logging.basicConfig(
