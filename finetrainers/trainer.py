@@ -78,7 +78,7 @@ class Trainer:
         self._init_directories_and_repositories()
 
         self.state.model_name = self.args.model_name
-        self.model_config = get_config_from_model_name(self.args.model_name)
+        self.model_config = get_config_from_model_name(self.args.model_name, self.args.training_type)
 
     def prepare_models(self) -> None:
         logger.info("Initializing models")
@@ -88,6 +88,7 @@ class Trainer:
             "text_encoder_dtype": torch.bfloat16,
             "transformer_dtype": torch.bfloat16,
             "vae_dtype": torch.bfloat16,
+            "revision": self.args.revision,
             "cache_dir": self.args.cache_dir,
         }
         if self.args.pretrained_model_name_or_path is not None:
@@ -96,9 +97,17 @@ class Trainer:
 
         self.tokenizer = components.get("tokenizer", None)
         self.text_encoder = components.get("text_encoder", None)
+        self.tokenizer_2 = components.get("tokenizer_2", None)
+        self.text_encoder_2 = components.get("text_encoder_2", None)
         self.transformer = components.get("transformer", None)
         self.vae = components.get("vae", None)
         self.scheduler = components.get("scheduler", None)
+
+        if self.vae is not None:
+            if self.args.enable_slicing:
+                self.vae.enable_slicing()
+            if self.args.enable_tiling:
+                self.vae.enable_tiling()
 
         self.transformer_config = self.transformer.config if self.transformer is not None else None
 
@@ -130,6 +139,9 @@ class Trainer:
         self.transformer.requires_grad_(False)
         self.vae.requires_grad_(False)
 
+        if self.text_encoder_2 is not None:
+            self.text_encoder_2.requires_grad_(False)
+
         # For mixed precision training we cast all non-trainable weights (vae, text_encoder and transformer) to half-precision
         # as these weights are only used for inference, keeping weights in full precision is not required.
         weight_dtype = torch.float32
@@ -144,11 +156,14 @@ class Trainer:
                 "Mixed precision training with bfloat16 is not supported on MPS. Please use fp16 (recommended) or fp32 instead."
             )
 
-        # TODO(aryan): handle torch dtype from accelerator vs model dtype
+        # TODO(aryan): handle torch dtype from accelerator vs model dtype; refactor
         self.state.weight_dtype = weight_dtype
         self.text_encoder.to(self.state.accelerator.device, dtype=weight_dtype)
         self.transformer.to(self.state.accelerator.device, dtype=weight_dtype)
         self.vae.to(self.state.accelerator.device, dtype=weight_dtype)
+
+        if self.text_encoder_2 is not None:
+            self.text_encoder_2.to(self.state.accelerator.device, dtype=weight_dtype)
 
         if self.args.gradient_checkpointing:
             self.transformer.enable_gradient_checkpointing()
@@ -320,7 +335,6 @@ class Trainer:
         logger.info(f"Training configuration: {json.dumps(info, indent=4)}")
 
         # TODO(aryan): handle resume from checkpoint
-
         global_step = 0
         first_epoch = 0
         initial_global_step = 0
@@ -372,6 +386,8 @@ class Trainer:
                     other_conditions = self.model_config["prepare_conditions"](
                         tokenizer=self.tokenizer,
                         text_encoder=self.text_encoder,
+                        tokenizer_2=self.tokenizer_2,
+                        text_encoder_2=self.text_encoder_2,
                         prompt=prompts,
                         device=accelerator.device,
                         dtype=weight_dtype,
@@ -383,6 +399,10 @@ class Trainer:
                             other_conditions["prompt_embeds"].fill_(0)
                             other_conditions["prompt_attention_mask"].fill_(False)
 
+                            # TODO(aryan): refactor later
+                            if "pooled_prompt_embeds" in other_conditions:
+                                other_conditions["pooled_prompt_embeds"].fill_(0)
+
                     # These weighting schemes use a uniform timestep sampling and instead post-weight the loss
                     weights = compute_density_for_timestep_sampling(
                         weighting_scheme=self.args.flow_weighting_scheme,
@@ -392,11 +412,7 @@ class Trainer:
                         mode_scale=self.args.flow_mode_scale,
                     )
                     indices = (weights * self.scheduler.config.num_train_timesteps).long()
-                    sigmas = scheduler_sigmas[indices].flatten()
-
-                    while sigmas.ndim < latent_conditions["latents"].ndim:
-                        sigmas = sigmas.unsqueeze(-1)
-
+                    sigmas = scheduler_sigmas[indices]
                     timesteps = (sigmas * 1000.0).long()
 
                     noise = torch.randn(
@@ -524,12 +540,15 @@ class Trainer:
 
         pipeline = self.model_config["initialize_pipeline"](
             model_id=self.args.pretrained_model_name_or_path,
-            cache_dir=self.args.cache_dir,
             tokenizer=self.tokenizer,
             text_encoder=self.text_encoder,
+            tokenizer_2=self.tokenizer_2,
+            text_encoder_2=self.text_encoder_2,
             transformer=unwrap_model(accelerator, self.transformer),
             vae=self.vae,
             device=accelerator.device,
+            revision=self.args.revision,
+            cache_dir=self.args.cache_dir,
             enable_slicing=self.args.enable_slicing,
             enable_tiling=self.args.enable_tiling,
             enable_model_cpu_offload=self.args.enable_model_cpu_offload,
