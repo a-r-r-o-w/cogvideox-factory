@@ -2,7 +2,7 @@
 
 `cogvideox-factory` was renamed to `finetrainers`. If you're looking to train CogVideoX or Mochi with the legacy training scripts, please refer to [this](./training/README.md) README instead. Everything in the `training/` directory will be eventually moved and supported under `finetrainers`.
 
-FineTrainers is a work-in-progress library to support training of video models. The first priority is to support lora training for all models in [Diffusers](https://github.com/huggingface/diffusers), and eventually other methods like controlnets, control-loras, distillation, etc.
+FineTrainers is a work-in-progress library to support training of video models. The first priority is to support LoRA training for all models in [Diffusers](https://github.com/huggingface/diffusers), and eventually other methods like ControlNets (and Controls), Control LoRAs, distillation, etc.
 
 <table align="center">
 <tr>
@@ -12,7 +12,7 @@ FineTrainers is a work-in-progress library to support training of video models. 
 
 ## News
 
-- 🔥 **2024-12-20**: Support for LoRA finetuning of [Hunyuan Video](https://huggingface.co/tencent/HunyuanVideo) added! We would like to thank @SHYuanBest for his work on a training script [here](https://github.com/huggingface/diffusers/pull/10254).
+- 🔥 **2024-12-20**: Support for LoRA finetuning of [Hunyuan Video](https://huggingface.co/tencent/HunyuanVideo) added! We would like to thank [SHYuanBest](https://github.com/SHYuanBest) for his work on a training script [here](https://github.com/huggingface/diffusers/pull/10254).
 - 🔥 **2024-12-18**: Support for LoRA finetuning of [LTX Video](https://huggingface.co/Lightricks/LTX-Video) added!
 
 ## Quickstart
